@@ -60,11 +60,11 @@ mod tests {
         let dir = tempdir()?;
         let config_path = dir.path().join(".looprc");
         let mut file = File::create(&config_path)?;
-        writeln!(file, r#"{{"directories": ["dir1", "dir2"], "ignore": [".git", "node_modules"]}}"#)?;
+        writeln!(file, r#"{{""ignore": [".git"]}}"#)?;
 
         let config = parse_config(&config_path)?;
         assert_eq!(config.directories, vec!["dir1", "dir2"]);
-        assert_eq!(config.ignore, vec![".git", "node_modules"]);
+        assert_eq!(config.ignore, vec![".git"]);
         Ok(())
     }
 
