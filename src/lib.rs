@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::io::{self, Write, Read};
+use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::env;
 use std::collections::HashMap;
@@ -41,14 +41,14 @@ impl Default for LoopConfig {
 }
 
 #[derive(Default)]
-struct CommandResult {
-    success: bool,
-    exit_code: i32,
-    directory: PathBuf,
-    command: String,
+pub struct CommandResult {
+    pub success: bool,
+    pub exit_code: i32,
+    pub directory: PathBuf,
+    pub command: String,
 }
 
-fn load_aliases_from_file(path: &Path) -> Result<HashMap<String, String>> {
+pub fn load_aliases_from_file(path: &Path) -> Result<HashMap<String, String>> {
     let content = fs::read_to_string(path)?;
     let config: serde_json::Value = serde_json::from_str(&content)?;
     let aliases = config["aliases"].as_object()
@@ -145,7 +145,7 @@ pub fn add_aliases_to_global_looprc() -> Result<()> {
     Ok(())
 }
 
-fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConfig, aliases: &HashMap<String, String>) -> CommandResult {
+pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConfig, aliases: &HashMap<String, String>) -> CommandResult {
     if config.verbose {
         println!("Executing in directory: {}", dir.display());
     }
@@ -242,7 +242,7 @@ pub fn run(config: &LoopConfig, command: &str) -> Result<()> {
     Ok(())
 }
 
-fn expand_directories(directories: &[String], ignore: &[String]) -> Result<Vec<PathBuf>> {
+pub fn expand_directories(directories: &[String], ignore: &[String]) -> Result<Vec<PathBuf>> {
     let mut expanded = Vec::new();
 
     for dir in directories {
@@ -263,7 +263,7 @@ fn expand_directories(directories: &[String], ignore: &[String]) -> Result<Vec<P
     Ok(expanded)
 }
 
-fn should_ignore(path: &Path, ignore: &[String]) -> bool {
+pub fn should_ignore(path: &Path, ignore: &[String]) -> bool {
     ignore.iter().any(|i| path.to_string_lossy().contains(i))
 }
 
@@ -275,7 +275,7 @@ pub fn parse_config(config_path: &Path) -> Result<LoopConfig> {
     Ok(config)
 }
 
-fn get_aliases() -> HashMap<String, String> {
+pub fn get_aliases() -> HashMap<String, String> {
     let mut aliases = HashMap::new();
     
     if let Some(home) = env::var_os("HOME") {
@@ -305,4 +305,9 @@ fn get_aliases() -> HashMap<String, String> {
     }
 
     aliases
+}
+
+#[cfg(test)]
+mod tests {
+    include!("tests.rs");
 }
