@@ -307,6 +307,5 @@ pub fn get_aliases() -> HashMap<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    include!("tests.rs");
-}
+#[path = "tests.rs"]
+mod tests;
