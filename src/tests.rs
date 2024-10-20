@@ -34,18 +34,19 @@ fn test_expand_directories() {
     let dir2 = temp_dir.path().join("dir2");
     let subdir = dir1.join("subdir");
     fs::create_dir_all(&subdir).unwrap();
+
     fs::create_dir(&dir2).unwrap();
 
     let directories = vec![temp_dir.path().to_str().unwrap().to_string()];
     let ignore = vec![".git".to_string()];
 
-    let expanded = expand_directories(&directories, &ignore).unwrap();
+    let expanded = crate::expand_directories(&directories, &ignore).unwrap();
     
     assert_eq!(expanded.len(), 3); // Including the root directory itself
-    assert!(expanded.contains(&temp_dir.path().to_path_buf()));
-    assert!(expanded.contains(&dir1));
-    assert!(expanded.contains(&dir2));
-    assert!(!expanded.contains(&subdir)); // Ensure subdirectories are not included
+    assert!(expanded.contains(&temp_dir.path().to_str().unwrap().to_string()));
+    assert!(expanded.contains(&dir1.to_str().unwrap().to_string()));
+    assert!(expanded.contains(&dir2.to_str().unwrap().to_string()));
+    assert!(!expanded.contains(&subdir.to_str().unwrap().to_string())); // Ensure subdirectories are not included
 }
 
 #[test]

@@ -169,6 +169,7 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
         .stdout(if config.silent { Stdio::null() } else { Stdio::inherit() })
         .stderr(if config.silent { Stdio::null() } else { Stdio::inherit() })
         .spawn()
+        .with_context(|| format!("Failed to execute command '{}' in directory '{}'", command, dir.display()))
         .expect("Failed to execute command");
 
     let status = child.wait().expect("Failed to wait on child process");
@@ -193,12 +194,34 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
     }
 }
 
+pub fn expand_directories(directories: &[String], ignore: &[String]) -> Result<Vec<String>> {
+    let mut expanded = Vec::new();
+
+    use std::fs;
+
+    for dir in directories {
+        let dir_path = PathBuf::from(dir);
+        if dir_path.is_dir() && !should_ignore(&dir_path, ignore) {
+            expanded.push(dir_path.to_string_lossy().into_owned());
+
+            for entry in fs::read_dir(&dir_path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() && !should_ignore(&path, ignore) {
+                    expanded.push(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
+    Ok(expanded)
+}
+
 pub fn run(config: &LoopConfig, command: &str) -> Result<()> {
     if config.add_aliases_to_global_looprc {
         return add_aliases_to_global_looprc();
     }
 
-    // let dirs = expand_directories(&config.directories, &config.ignore)?;
     let results = Arc::new(Mutex::new(Vec::new()));
     let aliases = get_aliases();
 
@@ -240,27 +263,6 @@ pub fn run(config: &LoopConfig, command: &str) -> Result<()> {
 
     Ok(())
 }
-
-// pub fn expand_directories(directories: &[String], ignore: &[String]) -> Result<Vec<PathBuf>> {
-//     let mut expanded = Vec::new();
-
-//     for dir in directories {
-//         let dir_path = PathBuf::from(dir);
-//         if dir_path.is_dir() && !should_ignore(&dir_path, ignore) {
-//             expanded.push(dir_path.clone());
-
-//             for entry in fs::read_dir(&dir_path)? {
-//                 let entry = entry?;
-//                 let path = entry.path();
-//                 if path.is_dir() && !should_ignore(&path, ignore) {
-//                     expanded.push(path);
-//                 }
-//             }
-//         }
-//     }
-
-//     Ok(expanded)
-// }
 
 pub fn should_ignore(path: &Path, ignore: &[String]) -> bool {
     ignore.iter().any(|i| path.to_string_lossy().contains(i))
