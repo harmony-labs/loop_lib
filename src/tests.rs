@@ -86,8 +86,14 @@ fn test_get_aliases() {
 
 #[test]
 fn test_run() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("dir1");
+    let dir2 = temp_dir.path().join("dir2");
+    fs::create_dir(&dir1).unwrap();
+    fs::create_dir(&dir2).unwrap();
+
     let config = LoopConfig {
-        directories: vec!["/mock/dir1".to_string(), "/mock/dir2".to_string()],
+        directories: vec![dir1.to_str().unwrap().to_string(), dir2.to_str().unwrap().to_string()],
         ignore: vec![],
         verbose: false,
         silent: true,
@@ -95,25 +101,12 @@ fn test_run() {
         add_aliases_to_global_looprc: false,
     };
 
-    // Create a temporary directory for testing
-    let temp_dir = TempDir::new().unwrap();
-    let dir1 = temp_dir.path().join("dir1");
-    let dir2 = temp_dir.path().join("dir2");
-    fs::create_dir(&dir1).unwrap();
-    fs::create_dir(&dir2).unwrap();
-
-    // Update config with real directories
-    let config = LoopConfig {
-        directories: vec![temp_dir.path().to_str().unwrap().to_string()],
-        ..config
-    };
-
     let result = run(&config, "echo test");
     assert!(result.is_ok());
 
     // Test with a failing command
     let result = run(&config, "false");
-    assert!(result.is_ok()); // The function itself should not fail
+    assert!(result.is_err()); // The function should return an error if any command fails
 }
 
 #[test]

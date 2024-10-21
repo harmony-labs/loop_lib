@@ -145,6 +145,18 @@ pub fn add_aliases_to_global_looprc() -> Result<()> {
 }
 
 pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConfig, aliases: &HashMap<String, String>) -> CommandResult {
+    if !dir.exists() {
+        println!("\nNo directory found for {}", dir.display());
+        let dir_name = dir.file_name().unwrap_or_default().to_str().unwrap();
+        println!("\x1b[31m\n✗ {}: No directory found. Command: {} (Exit code: {})\x1b[0m", dir_name, command, 1);
+        return CommandResult {
+            success: false,
+            exit_code: 1,
+            directory: dir.to_path_buf(),
+            command: command.to_string(),
+        };
+    }
+
     if config.verbose {
         println!("Executing in directory: {}", dir.display());
     }
@@ -177,11 +189,14 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
     let success = status.success();
 
     if !config.silent {
-        let dir_name = dir.file_name().unwrap_or_default().to_str().unwrap();
+        let dir_name = dir.file_name()
+            .and_then(|name| name.to_str())
+            .filter(|&s| !s.is_empty())
+            .unwrap_or(".");
         if success {
-            println!("\x1b[32m{} ✓\x1b[0m", dir_name);
+            println!("\x1b[32m\n✓ {}\x1b[0m", dir_name);
         } else {
-            println!("\x1b[31m{} ✗: exited code {}\x1b[0m", dir_name, exit_code);
+            println!("\x1b[31m\n✗ {}: exited code {}\x1b[0m", dir_name, exit_code);
         }
         io::stdout().flush().unwrap();
     }
@@ -231,34 +246,32 @@ pub fn run(config: &LoopConfig, command: &str) -> Result<()> {
         Ok(())
     };
 
-    // if config.parallel {
-    //     &config.directories.par_iter().try_for_each(run_command)?;
-    // } else {
-        config.directories.iter().map(PathBuf::from).try_for_each(|dir| run_command(&dir))?;
-    // }
+    if config.parallel {
+        use rayon::prelude::*;
+        config.directories.par_iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
+    } else {
+        config.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
+    }
 
     let results = results.lock().unwrap();
     let total = results.len();
     let failed: Vec<_> = results.iter().filter(|r| !r.success).collect();
     let failed_count = failed.len();
 
-    if failed_count > 0 && !config.silent {
-        println!("\nFailed commands:");
-        for result in &failed {
-            println!("{} in directory: {}", "✗".red(), result.directory.display());
-            println!("Command: {}", result.command);
-            println!("Exit code: {}", result.exit_code);
+    if !config.silent {
+        if failed_count == 0 {
+            println!("\n{} commands complete", total.to_string().green());
+        } else {
+            println!("\nSummary: {} {} out of {} commands failed", "✗".red(), failed_count.to_string().red(), total);
+            for result in &failed {
+                println!("\n{} {}: {} (Exit code {}) ", "✗".red(), result.directory.display(), result.command, result.exit_code);
+            }
             println!();
         }
     }
 
-    if !config.silent {
-        println!("\nSummary:");
-        if failed_count == 0 {
-            println!("{} {} commands complete", "✓".green(), total.to_string().green());
-        } else {
-            println!("{} {} out of {} commands failed", "✗".red(), failed_count.to_string().red(), total);
-        }
+    if failed_count > 0 {
+        return Err(anyhow::anyhow!("At least one command failed"));
     }
 
     Ok(())
@@ -270,9 +283,9 @@ pub fn should_ignore(path: &Path, ignore: &[String]) -> bool {
 
 pub fn parse_config(config_path: &Path) -> Result<LoopConfig> {
     let config_str = fs::read_to_string(config_path)
-        .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
+        .with_context(|| format!("Failed to read looprc config file: {:?}", config_path))?;
     let config: LoopConfig = serde_json::from_str(&config_str)
-        .with_context(|| format!("Failed to parse config file: {:?}", config_path))?;
+        .with_context(|| format!("Failed to parse looprc config file: {:?}", config_path))?;
     Ok(config)
 }
 
