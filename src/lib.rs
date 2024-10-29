@@ -31,7 +31,6 @@ impl Default for LoopConfig {
             ignore: vec![".git".to_string()],
             verbose: false,
             silent: false,
-            parallel: false,
             add_aliases_to_global_looprc: false,
         }
     }

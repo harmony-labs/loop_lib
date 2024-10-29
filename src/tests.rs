@@ -22,7 +22,6 @@ fn test_parse_config() {
     assert_eq!(config.ignore, vec![".git"]);
     assert!(config.verbose);
     assert!(!config.silent);
-    assert!(config.parallel);
     assert!(!config.add_aliases_to_global_looprc);
 }
 
@@ -158,7 +157,6 @@ fn test_run_without_looprc() {
         ignore: vec![],
         verbose: false,
         silent: true,
-        parallel: false,
         add_aliases_to_global_looprc: false,
     };
 
