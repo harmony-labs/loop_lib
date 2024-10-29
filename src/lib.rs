@@ -21,8 +21,6 @@ pub struct LoopConfig {
     #[serde(default)]
     pub silent: bool,
     #[serde(default)]
-    pub parallel: bool,
-    #[serde(default)]
     pub add_aliases_to_global_looprc: bool,
 }
 
@@ -246,12 +244,7 @@ pub fn run(config: &LoopConfig, command: &str) -> Result<()> {
         Ok(())
     };
 
-    if config.parallel {
-        use rayon::prelude::*;
-        config.directories.par_iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
-    } else {
-        config.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
-    }
+    config.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
 
     let results = results.lock().unwrap();
     let total = results.len();

@@ -12,7 +12,6 @@ fn test_parse_config() {
         "ignore": [".git"],
         "verbose": true,
         "silent": false,
-        "parallel": true,
         "add_aliases_to_global_looprc": false
     }
     "#;
@@ -97,7 +96,6 @@ fn test_run() {
         ignore: vec![],
         verbose: false,
         silent: true,
-        parallel: false,
         add_aliases_to_global_looprc: false,
     };
 
