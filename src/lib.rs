@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use colored::*;
 use diff;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoopConfig {
     #[serde(default)]
     pub directories: Vec<String>,
@@ -22,6 +22,10 @@ pub struct LoopConfig {
     pub silent: bool,
     #[serde(default)]
     pub add_aliases_to_global_looprc: bool,
+    #[serde(default)]
+    pub include_filters: Option<Vec<String>>,
+    #[serde(default)]
+    pub exclude_filters: Option<Vec<String>>,
 }
 
 impl Default for LoopConfig {
@@ -32,6 +36,8 @@ impl Default for LoopConfig {
             verbose: false,
             silent: false,
             add_aliases_to_global_looprc: false,
+            include_filters: None,
+            exclude_filters: None,
         }
     }
 }
@@ -191,7 +197,19 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
             .filter(|&s| !s.is_empty())
             .unwrap_or(".");
         if success {
-            println!("\x1b[32m\n✓ {}\x1b[0m", dir_name);
+            if dir_name == "." {
+                if let Ok(cwd) = std::env::current_dir() {
+                    if let Some(base) = cwd.file_name().and_then(|s| s.to_str()) {
+                        println!("\x1b[32m\n✓ . ({})\x1b[0m", base);
+                    } else {
+                        println!("\x1b[32m\n✓ .\x1b[0m");
+                    }
+                } else {
+                    println!("\x1b[32m\n✓ .\x1b[0m");
+                }
+            } else {
+                println!("\x1b[32m\n✓ {}\x1b[0m", dir_name);
+            }
         } else {
             println!("\x1b[31m\n✗ {}: exited code {}\x1b[0m", dir_name, exit_code);
         }
@@ -229,7 +247,41 @@ pub fn expand_directories(directories: &[String], ignore: &[String]) -> Result<V
     Ok(expanded)
 }
 
-pub fn run(config: &LoopConfig, command: &str) -> Result<()> {
+pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
+    // Apply include/exclude filters
+    let mut dirs = orig_config.directories.clone();
+
+    println!("Initial directories: {:?}", dirs);
+
+    if let Some(ref includes) = orig_config.include_filters {
+        if !includes.is_empty() {
+            dirs = dirs.into_iter()
+                .filter(|p| includes.iter().any(|f| p.contains(f)))
+                .collect();
+        }
+    }
+
+    if let Some(ref excludes) = orig_config.exclude_filters {
+        if !excludes.is_empty() {
+            println!("Exclude filters: {:?}", excludes);
+            dirs = dirs.into_iter()
+                .filter(|p| {
+                    let excluded = excludes.iter().any(|f| {
+                        let f = f.trim_end_matches('/');
+                        p == f || p.starts_with(f)
+                    });
+                    println!("Dir: {}, excluded: {}", p, excluded);
+                    !excluded
+                })
+                .collect();
+        }
+    }
+
+    println!("Filtered directories: {:?}", dirs);
+
+    let mut config = orig_config.clone();
+    config.directories = dirs;
+    let config_ref = &config;
     if config.add_aliases_to_global_looprc {
         return add_aliases_to_global_looprc();
     }
@@ -238,12 +290,12 @@ pub fn run(config: &LoopConfig, command: &str) -> Result<()> {
     let aliases = get_aliases();
 
     let run_command = |dir: &PathBuf| -> Result<()> {
-        let result = execute_command_in_directory(dir, command, config, &aliases);
+        let result = execute_command_in_directory(dir, command, config_ref, &aliases);
         results.lock().unwrap().push(result);
         Ok(())
     };
 
-    config.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
+    config_ref.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
 
     let results = results.lock().unwrap();
     let total = results.len();
@@ -282,6 +334,101 @@ pub fn parse_config(config_path: &Path) -> Result<LoopConfig> {
 }
 
 pub fn get_aliases() -> HashMap<String, String> {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_config(dirs: Vec<&str>, includes: Option<Vec<&str>>, excludes: Option<Vec<&str>>) -> LoopConfig {
+        LoopConfig {
+            directories: dirs.into_iter().map(|s| s.to_string()).collect(),
+            ignore: vec![],
+            verbose: false,
+            silent: false,
+            add_aliases_to_global_looprc: false,
+            include_filters: includes.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
+            exclude_filters: excludes.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
+        }
+    }
+
+    #[test]
+    fn test_exclude_filters() {
+        let mut config = make_config(
+            vec![".", "loop_cli", "meta_cli"].into_iter().map(|s| s.to_string()).collect(),
+            None,
+            Some(vec!["loop_cli"].into_iter().map(|s| s.to_string()).collect()),
+        );
+        let mut dirs = config.directories.clone();
+
+        if let Some(ref excludes) = config.exclude_filters {
+            dirs = dirs.into_iter()
+                .filter(|p| !excludes.iter().any(|f| {
+                    let f = f.trim_end_matches('/');
+                    p == f || p.starts_with(f)
+                }))
+                .collect();
+        }
+
+        assert!(dirs.contains(&".".to_string()));
+        assert!(!dirs.contains(&"loop_cli".to_string()));
+        assert!(dirs.contains(&"meta_cli".to_string()));
+    }
+
+    #[test]
+    fn test_include_filters() {
+        let mut config = make_config(
+            vec![".", "loop_cli", "meta_cli"].into_iter().map(|s| s.to_string()).collect(),
+            Some(vec!["meta_cli"].into_iter().map(|s| s.to_string()).collect()),
+            None,
+        );
+        let mut dirs = config.directories.clone();
+
+        if let Some(ref includes) = config.include_filters {
+            dirs = dirs.into_iter()
+                .filter(|p| includes.iter().any(|f| {
+                    let f = f.trim_end_matches('/');
+                    p == f || p.starts_with(f)
+                }))
+                .collect();
+        }
+
+        assert!(dirs.contains(&"meta_cli".to_string()));
+        assert!(!dirs.contains(&"loop_cli".to_string()));
+        assert!(!dirs.contains(&".".to_string()));
+    }
+
+    #[test]
+    fn test_include_and_exclude() {
+        let mut config = make_config(
+            vec![".", "loop_cli", "meta_cli", "meta_git_cli"].into_iter().map(|s| s.to_string()).collect(),
+            Some(vec!["meta"].into_iter().map(|s| s.to_string()).collect()),
+            Some(vec!["meta_git_cli"].into_iter().map(|s| s.to_string()).collect()),
+        );
+        let mut dirs = config.directories.clone();
+
+        if let Some(ref includes) = config.include_filters {
+            dirs = dirs.into_iter()
+                .filter(|p| includes.iter().any(|f| {
+                    let f = f.trim_end_matches('/');
+                    p == f || p.starts_with(f)
+                }))
+                .collect();
+        }
+
+        if let Some(ref excludes) = config.exclude_filters {
+            dirs = dirs.into_iter()
+                .filter(|p| !excludes.iter().any(|f| {
+                    let f = f.trim_end_matches('/');
+                    p == f || p.starts_with(f)
+                }))
+                .collect();
+        }
+
+        assert!(dirs.contains(&"meta_cli".to_string()));
+        assert!(!dirs.contains(&"meta_git_cli".to_string()));
+        assert!(!dirs.contains(&"loop_cli".to_string()));
+        assert!(!dirs.contains(&".".to_string()));
+    }
+}
     let mut aliases = HashMap::new();
     
     if let Some(home) = env::var_os("HOME") {
