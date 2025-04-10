@@ -338,7 +338,7 @@ pub fn get_aliases() -> HashMap<String, String> {
 mod tests {
     use super::*;
 
-    fn make_config(dirs: Vec<&str>, includes: Option<Vec<&str>>, excludes: Option<Vec<&str>>) -> LoopConfig {
+    fn make_config(dirs: Vec<String>, includes: Option<Vec<String>>, excludes: Option<Vec<String>>) -> LoopConfig {
         LoopConfig {
             directories: dirs.into_iter().map(|s| s.to_string()).collect(),
             ignore: vec![],
@@ -353,9 +353,9 @@ mod tests {
     #[test]
     fn test_exclude_filters() {
         let mut config = make_config(
-            vec![".", "loop_cli", "meta_cli"].into_iter().map(|s| s.to_string()).collect(),
+            vec![".".to_string(), "loop_cli".to_string(), "meta_cli".to_string()],
             None,
-            Some(vec!["loop_cli"].into_iter().map(|s| s.to_string()).collect()),
+            Some(vec!["loop_cli".to_string()]),
         );
         let mut dirs = config.directories.clone();
 
@@ -376,8 +376,8 @@ mod tests {
     #[test]
     fn test_include_filters() {
         let mut config = make_config(
-            vec![".", "loop_cli", "meta_cli"].into_iter().map(|s| s.to_string()).collect(),
-            Some(vec!["meta_cli"].into_iter().map(|s| s.to_string()).collect()),
+            vec![".".to_string(), "loop_cli".to_string(), "meta_cli".to_string()],
+            Some(vec!["meta_cli".to_string()]),
             None,
         );
         let mut dirs = config.directories.clone();
@@ -399,9 +399,9 @@ mod tests {
     #[test]
     fn test_include_and_exclude() {
         let mut config = make_config(
-            vec![".", "loop_cli", "meta_cli", "meta_git_cli"].into_iter().map(|s| s.to_string()).collect(),
-            Some(vec!["meta"].into_iter().map(|s| s.to_string()).collect()),
-            Some(vec!["meta_git_cli"].into_iter().map(|s| s.to_string()).collect()),
+            vec![".".to_string(), "loop_cli".to_string(), "meta_cli".to_string(), "meta_git_cli".to_string()],
+            Some(vec!["meta".to_string()]),
+            Some(vec!["meta_git_cli".to_string()]),
         );
         let mut dirs = config.directories.clone();
 

@@ -96,6 +96,8 @@ fn test_run() {
         verbose: false,
         silent: true,
         add_aliases_to_global_looprc: false,
+        include_filters: None,
+        exclude_filters: None,
     };
 
     let result = run(&config, "echo test");
@@ -158,6 +160,8 @@ fn test_run_without_looprc() {
         verbose: false,
         silent: true,
         add_aliases_to_global_looprc: false,
+        include_filters: None,
+        exclude_filters: None,
     };
 
     let result = run(&config, "echo test");
