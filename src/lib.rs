@@ -251,8 +251,6 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
     // Apply include/exclude filters
     let mut dirs = orig_config.directories.clone();
 
-    println!("Initial directories: {:?}", dirs);
-
     if let Some(ref includes) = orig_config.include_filters {
         if !includes.is_empty() {
             dirs = dirs.into_iter()
@@ -276,8 +274,6 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
                 .collect();
         }
     }
-
-    println!("Filtered directories: {:?}", dirs);
 
     let mut config = orig_config.clone();
     config.directories = dirs;
