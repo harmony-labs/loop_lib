@@ -7,8 +7,10 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::env;
 use std::collections::HashMap;
+use std::time::Duration;
 use colored::*;
 use diff;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoopConfig {
@@ -26,6 +28,8 @@ pub struct LoopConfig {
     pub include_filters: Option<Vec<String>>,
     #[serde(default)]
     pub exclude_filters: Option<Vec<String>>,
+    #[serde(default)]
+    pub parallel: bool,
 }
 
 impl Default for LoopConfig {
@@ -38,6 +42,7 @@ impl Default for LoopConfig {
             add_aliases_to_global_looprc: false,
             include_filters: None,
             exclude_filters: None,
+            parallel: false,
         }
     }
 }
@@ -48,6 +53,8 @@ pub struct CommandResult {
     pub exit_code: i32,
     pub directory: PathBuf,
     pub command: String,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 pub fn load_aliases_from_file(path: &Path) -> Result<HashMap<String, String>> {
@@ -157,6 +164,8 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
             exit_code: 1,
             directory: dir.to_path_buf(),
             command: command.to_string(),
+            stdout: String::new(),
+            stderr: String::new(),
         };
     }
 
@@ -221,6 +230,63 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
         exit_code,
         directory: dir.to_path_buf(),
         command: command.to_string(),
+        stdout: String::new(),  // Sequential mode uses Stdio::inherit(), so no capture
+        stderr: String::new(),
+    }
+}
+
+/// Capturing version for parallel execution - captures stdout/stderr for display after completion
+pub fn execute_command_in_directory_capturing(dir: &Path, command: &str, _config: &LoopConfig, aliases: &HashMap<String, String>) -> CommandResult {
+    if !dir.exists() {
+        return CommandResult {
+            success: false,
+            exit_code: 1,
+            directory: dir.to_path_buf(),
+            command: command.to_string(),
+            stdout: String::new(),
+            stderr: format!("Directory does not exist: {}", dir.display()),
+        };
+    }
+
+    let command = command.split_whitespace().next()
+        .and_then(|cmd| aliases.get(cmd).map(|alias_cmd| (cmd, alias_cmd)))
+        .map(|(cmd, alias_cmd)| command.replacen(cmd, alias_cmd, 1))
+        .unwrap_or_else(|| command.to_string());
+
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+    let output = Command::new(&shell)
+        .arg("-c")
+        .arg(&command)
+        .current_dir(dir)
+        .envs(env::vars())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    match output {
+        Ok(output) => {
+            let success = output.status.success();
+            let exit_code = output.status.code().unwrap_or(-1);
+            CommandResult {
+                success,
+                exit_code,
+                directory: dir.to_path_buf(),
+                command: command.to_string(),
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            }
+        }
+        Err(e) => {
+            CommandResult {
+                success: false,
+                exit_code: -1,
+                directory: dir.to_path_buf(),
+                command: command.to_string(),
+                stdout: String::new(),
+                stderr: format!("Failed to execute: {}", e),
+            }
+        }
     }
 }
 
@@ -283,15 +349,126 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
     }
 
     let results = Arc::new(Mutex::new(Vec::new()));
-    let aliases = get_aliases();
+    let aliases = Arc::new(get_aliases());
 
-    let run_command = |dir: &PathBuf| -> Result<()> {
-        let result = execute_command_in_directory(dir, command, config_ref, &aliases);
-        results.lock().unwrap().push(result);
-        Ok(())
-    };
+    if config.parallel {
+        // Parallel execution with staggered spawns and spinners
+        const SPAWN_STAGGER_MS: u64 = 10;
 
-    config_ref.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
+        let is_tty = atty::is(atty::Stream::Stdout);
+        let mp = if is_tty { Some(MultiProgress::new()) } else { None };
+        let spinner_style = ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
+            .unwrap()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
+
+        let total = config_ref.directories.len();
+        let mut handles = vec![];
+
+        for (i, dir) in config_ref.directories.iter().enumerate() {
+            // Small delay between spawns to spread out connections
+            if i > 0 {
+                std::thread::sleep(Duration::from_millis(SPAWN_STAGGER_MS));
+            }
+
+            let pb = if let Some(ref mp) = mp {
+                let pb = mp.add(ProgressBar::new_spinner());
+                pb.set_style(spinner_style.clone());
+                pb.set_prefix(format!("[{}/{}]", i + 1, total));
+                pb.enable_steady_tick(Duration::from_millis(100));
+                Some(pb)
+            } else {
+                None
+            };
+
+            let dir = PathBuf::from(dir);
+            let dir_name = dir.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(".")
+                .to_string();
+            let command = command.to_string();
+            let config = config_ref.clone();
+            let aliases = Arc::clone(&aliases);
+            let results = Arc::clone(&results);
+            let prefix = format!("[{}/{}]", i + 1, total);
+
+            // Set initial spinner message
+            if let Some(ref pb) = pb {
+                pb.set_message(format!("{}: running...", dir_name));
+            }
+
+            let handle = std::thread::spawn(move || {
+                let result = execute_command_in_directory_capturing(&dir, &command, &config, &aliases);
+
+                // Update spinner with result
+                if let Some(ref pb) = pb {
+                    if result.success {
+                        pb.finish_with_message(format!("{} {}", "✓".green(), dir_name.green()));
+                    } else {
+                        pb.finish_with_message(format!("{} {} (exit {})", "✗".red(), dir_name.red(), result.exit_code));
+                    }
+                } else {
+                    // Non-TTY output
+                    if result.success {
+                        println!("{} {} {}", prefix, "✓".green(), dir_name.green());
+                    } else {
+                        println!("{} {} {} (exit {})", prefix, "✗".red(), dir_name.red(), result.exit_code);
+                    }
+                }
+
+                results.lock().unwrap().push(result);
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for h in handles {
+            let _ = h.join();
+        }
+
+        // Print captured output after all spinners complete
+        if !config.silent {
+            let results = results.lock().unwrap();
+            let has_any_output = results.iter().any(|r| {
+                !r.stdout.trim().is_empty() || !r.stderr.trim().is_empty()
+            });
+
+            if has_any_output {
+                // Two newlines: one to ensure we're past the spinner area, one for the blank line
+                println!("\n");
+            }
+
+            for result in results.iter() {
+                let dir_name = result.directory.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(".");
+
+                let has_output = !result.stdout.trim().is_empty() || !result.stderr.trim().is_empty();
+                if has_output {
+                    if result.success {
+                        println!("{} {}:", "✓".green(), dir_name.green());
+                    } else {
+                        println!("{} {}:", "✗".red(), dir_name.red());
+                    }
+                    if !result.stdout.trim().is_empty() {
+                        print!("{}", result.stdout);
+                    }
+                    if !result.stderr.trim().is_empty() {
+                        print!("{}", result.stderr);
+                    }
+                    println!();  // Blank line after each repo's output
+                }
+            }
+        }
+    } else {
+        // Sequential execution
+        let run_command = |dir: &PathBuf| -> Result<()> {
+            let result = execute_command_in_directory(dir, command, config_ref, &aliases);
+            results.lock().unwrap().push(result);
+            Ok(())
+        };
+
+        config_ref.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
+    }
 
     let results = results.lock().unwrap();
     let total = results.len();
@@ -300,7 +477,7 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
 
     if !config.silent {
         if failed_count == 0 {
-            println!("\n{} commands complete", total.to_string().green());
+            println!("{} commands complete", total.to_string().green());
         } else {
             println!("\nSummary: {} {} out of {} commands failed", "✗".red(), failed_count.to_string().red(), total);
             for result in &failed {
@@ -343,6 +520,7 @@ mod tests {
             add_aliases_to_global_looprc: false,
             include_filters: includes.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
             exclude_filters: excludes.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
+            parallel: false,
         }
     }
 
