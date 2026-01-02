@@ -39,7 +39,7 @@ fn test_expand_directories() {
     let ignore = vec![".git".to_string()];
 
     let expanded = crate::expand_directories(&directories, &ignore).unwrap();
-    
+
     assert_eq!(expanded.len(), 3); // Including the root directory itself
     assert!(expanded.contains(&temp_dir.path().to_str().unwrap().to_string()));
     assert!(expanded.contains(&dir1.to_str().unwrap().to_string()));
@@ -91,7 +91,10 @@ fn test_run() {
     fs::create_dir(&dir2).unwrap();
 
     let config = LoopConfig {
-        directories: vec![dir1.to_str().unwrap().to_string(), dir2.to_str().unwrap().to_string()],
+        directories: vec![
+            dir1.to_str().unwrap().to_string(),
+            dir2.to_str().unwrap().to_string(),
+        ],
         ignore: vec![],
         verbose: false,
         silent: true,
@@ -213,12 +216,14 @@ fn test_execute_command_in_directory_capturing() {
     let aliases = HashMap::new();
     let temp_dir = TempDir::new().unwrap();
 
-    let result = execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases);
+    let result =
+        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases);
     assert!(result.success);
     assert_eq!(result.exit_code, 0);
     assert!(result.stdout.contains("hello"));
 
-    let result = execute_command_in_directory_capturing(temp_dir.path(), "false", &config, &aliases);
+    let result =
+        execute_command_in_directory_capturing(temp_dir.path(), "false", &config, &aliases);
     assert!(!result.success);
     assert_eq!(result.exit_code, 1);
 }
@@ -234,7 +239,12 @@ fn test_execute_command_in_directory_capturing_stderr() {
     let temp_dir = TempDir::new().unwrap();
 
     // Command that writes to stderr
-    let result = execute_command_in_directory_capturing(temp_dir.path(), "echo error >&2", &config, &aliases);
+    let result = execute_command_in_directory_capturing(
+        temp_dir.path(),
+        "echo error >&2",
+        &config,
+        &aliases,
+    );
     assert!(result.success);
     assert!(result.stderr.contains("error"));
 }
@@ -249,7 +259,8 @@ fn test_execute_command_nonexistent_directory() {
     let aliases = HashMap::new();
     let nonexistent = Path::new("/nonexistent/path/that/does/not/exist");
 
-    let result = execute_command_in_directory_capturing(nonexistent, "echo test", &config, &aliases);
+    let result =
+        execute_command_in_directory_capturing(nonexistent, "echo test", &config, &aliases);
     assert!(!result.success);
     assert_eq!(result.exit_code, 1);
     assert!(result.stderr.contains("does not exist"));

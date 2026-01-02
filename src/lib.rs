@@ -1,16 +1,15 @@
 use anyhow::{Context, Result};
+use colored::*;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
-use std::env;
-use std::collections::HashMap;
 use std::time::Duration;
-use colored::*;
-use diff;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoopConfig {
@@ -60,13 +59,17 @@ pub struct CommandResult {
 pub fn load_aliases_from_file(path: &Path) -> Result<HashMap<String, String>> {
     let content = fs::read_to_string(path)?;
     let config: serde_json::Value = serde_json::from_str(&content)?;
-    let aliases = config["aliases"].as_object()
+    let aliases = config["aliases"]
+        .as_object()
         .ok_or_else(|| anyhow::anyhow!("No 'aliases' object found in config file"))?;
-    Ok(aliases.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+    Ok(aliases
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+        .collect())
 }
 
 fn prompt_user(question: &str) -> Result<bool> {
-    print!("{} [y/N]: ", question);
+    print!("{question} [y/N]: ");
     io::stdout().flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -75,10 +78,10 @@ fn prompt_user(question: &str) -> Result<bool> {
 
 pub fn add_aliases_to_global_looprc() -> Result<()> {
     println!("Starting add_aliases_to_global_looprc function");
-    
+
     let home = env::var("HOME").context("Failed to get HOME directory")?;
     let global_looprc = PathBuf::from(home).join(".looprc");
-    println!("Global .looprc path: {:?}", global_looprc);
+    println!("Global .looprc path: {global_looprc:?}");
 
     let mut aliases = HashMap::new();
     let mut existing_content = String::new();
@@ -101,8 +104,8 @@ pub fn add_aliases_to_global_looprc() -> Result<()> {
     }
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    println!("Using shell: {}", shell);
-    
+    println!("Using shell: {shell}");
+
     println!("Executing 'alias' command");
     let output = Command::new(&shell)
         .arg("-i")
@@ -115,7 +118,11 @@ pub fn add_aliases_to_global_looprc() -> Result<()> {
     for line in stdout.lines() {
         if let Some((alias, command)) = line.split_once('=') {
             let alias = alias.trim().trim_start_matches("alias ").to_string();
-            let command = command.trim().trim_matches('\'').trim_matches('"').to_string();
+            let command = command
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"')
+                .to_string();
             aliases.insert(alias, command);
         }
     }
@@ -127,15 +134,15 @@ pub fn add_aliases_to_global_looprc() -> Result<()> {
 
     println!("Serializing config to string");
     let new_content = serde_json::to_string_pretty(&config)?;
-    
+
     // Show preview of changes
     println!("\nPreview of changes:");
     if !existing_content.is_empty() {
         for diff in diff::lines(&existing_content, &new_content) {
             match diff {
-                diff::Result::Left(l) => println!("{}", format!("-{}", l).red()),
-                diff::Result::Both(l, _) => println!(" {}", l),
-                diff::Result::Right(r) => println!("{}", format!("+{}", r).green()),
+                diff::Result::Left(l) => println!("{}", format!("-{l}").red()),
+                diff::Result::Both(l, _) => println!(" {l}"),
+                diff::Result::Right(r) => println!("{}", format!("+{r}").green()),
             }
         }
     } else {
@@ -154,11 +161,19 @@ pub fn add_aliases_to_global_looprc() -> Result<()> {
     Ok(())
 }
 
-pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConfig, aliases: &HashMap<String, String>) -> CommandResult {
+pub fn execute_command_in_directory(
+    dir: &Path,
+    command: &str,
+    config: &LoopConfig,
+    aliases: &HashMap<String, String>,
+) -> CommandResult {
     if !dir.exists() {
         println!("\nNo directory found for {}", dir.display());
         let dir_name = dir.file_name().unwrap_or_default().to_str().unwrap();
-        println!("\x1b[31m\n✗ {}: No directory found. Command: {} (Exit code: {})\x1b[0m", dir_name, command, 1);
+        println!(
+            "\x1b[31m\n✗ {}: No directory found. Command: {} (Exit code: {})\x1b[0m",
+            dir_name, command, 1
+        );
         return CommandResult {
             success: false,
             exit_code: 1,
@@ -178,7 +193,9 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
         io::stdout().flush().unwrap();
     }
 
-    let command = command.split_whitespace().next()
+    let command = command
+        .split_whitespace()
+        .next()
         .and_then(|cmd| aliases.get(cmd).map(|alias_cmd| (cmd, alias_cmd)))
         .map(|(cmd, alias_cmd)| command.replacen(cmd, alias_cmd, 1))
         .unwrap_or_else(|| command.to_string());
@@ -190,10 +207,24 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
         .arg(&command)
         .current_dir(dir)
         .envs(env::vars())
-        .stdout(if config.silent { Stdio::null() } else { Stdio::inherit() })
-        .stderr(if config.silent { Stdio::null() } else { Stdio::inherit() })
+        .stdout(if config.silent {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        })
+        .stderr(if config.silent {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        })
         .spawn()
-        .with_context(|| format!("Failed to execute command '{}' in directory '{}'", command, dir.display()))
+        .with_context(|| {
+            format!(
+                "Failed to execute command '{}' in directory '{}'",
+                command,
+                dir.display()
+            )
+        })
         .expect("Failed to execute command");
 
     let status = child.wait().expect("Failed to wait on child process");
@@ -201,7 +232,8 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
     let success = status.success();
 
     if !config.silent {
-        let dir_name = dir.file_name()
+        let dir_name = dir
+            .file_name()
             .and_then(|name| name.to_str())
             .filter(|&s| !s.is_empty())
             .unwrap_or(".");
@@ -209,7 +241,7 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
             if dir_name == "." {
                 if let Ok(cwd) = std::env::current_dir() {
                     if let Some(base) = cwd.file_name().and_then(|s| s.to_str()) {
-                        println!("\x1b[32m\n✓ . ({})\x1b[0m", base);
+                        println!("\x1b[32m\n✓ . ({base})\x1b[0m");
                     } else {
                         println!("\x1b[32m\n✓ .\x1b[0m");
                     }
@@ -217,10 +249,10 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
                     println!("\x1b[32m\n✓ .\x1b[0m");
                 }
             } else {
-                println!("\x1b[32m\n✓ {}\x1b[0m", dir_name);
+                println!("\x1b[32m\n✓ {dir_name}\x1b[0m");
             }
         } else {
-            println!("\x1b[31m\n✗ {}: exited code {}\x1b[0m", dir_name, exit_code);
+            println!("\x1b[31m\n✗ {dir_name}: exited code {exit_code}\x1b[0m");
         }
         io::stdout().flush().unwrap();
     }
@@ -230,13 +262,18 @@ pub fn execute_command_in_directory(dir: &Path, command: &str, config: &LoopConf
         exit_code,
         directory: dir.to_path_buf(),
         command: command.to_string(),
-        stdout: String::new(),  // Sequential mode uses Stdio::inherit(), so no capture
+        stdout: String::new(), // Sequential mode uses Stdio::inherit(), so no capture
         stderr: String::new(),
     }
 }
 
 /// Capturing version for parallel execution - captures stdout/stderr for display after completion
-pub fn execute_command_in_directory_capturing(dir: &Path, command: &str, _config: &LoopConfig, aliases: &HashMap<String, String>) -> CommandResult {
+pub fn execute_command_in_directory_capturing(
+    dir: &Path,
+    command: &str,
+    _config: &LoopConfig,
+    aliases: &HashMap<String, String>,
+) -> CommandResult {
     if !dir.exists() {
         return CommandResult {
             success: false,
@@ -248,7 +285,9 @@ pub fn execute_command_in_directory_capturing(dir: &Path, command: &str, _config
         };
     }
 
-    let command = command.split_whitespace().next()
+    let command = command
+        .split_whitespace()
+        .next()
         .and_then(|cmd| aliases.get(cmd).map(|alias_cmd| (cmd, alias_cmd)))
         .map(|(cmd, alias_cmd)| command.replacen(cmd, alias_cmd, 1))
         .unwrap_or_else(|| command.to_string());
@@ -277,16 +316,14 @@ pub fn execute_command_in_directory_capturing(dir: &Path, command: &str, _config
                 stderr: String::from_utf8_lossy(&output.stderr).to_string(),
             }
         }
-        Err(e) => {
-            CommandResult {
-                success: false,
-                exit_code: -1,
-                directory: dir.to_path_buf(),
-                command: command.to_string(),
-                stdout: String::new(),
-                stderr: format!("Failed to execute: {}", e),
-            }
-        }
+        Err(e) => CommandResult {
+            success: false,
+            exit_code: -1,
+            directory: dir.to_path_buf(),
+            command: command.to_string(),
+            stdout: String::new(),
+            stderr: format!("Failed to execute: {e}"),
+        },
     }
 }
 
@@ -319,25 +356,21 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
 
     if let Some(ref includes) = orig_config.include_filters {
         if !includes.is_empty() {
-            dirs = dirs.into_iter()
-                .filter(|p| includes.iter().any(|f| p.contains(f)))
-                .collect();
+            dirs.retain(|p| includes.iter().any(|f| p.contains(f)));
         }
     }
 
     if let Some(ref excludes) = orig_config.exclude_filters {
         if !excludes.is_empty() {
-            println!("Exclude filters: {:?}", excludes);
-            dirs = dirs.into_iter()
-                .filter(|p| {
-                    let excluded = excludes.iter().any(|f| {
-                        let f = f.trim_end_matches('/');
-                        p == f || p.starts_with(f)
-                    });
-                    println!("Dir: {}, excluded: {}", p, excluded);
-                    !excluded
-                })
-                .collect();
+            println!("Exclude filters: {excludes:?}");
+            dirs.retain(|p| {
+                let excluded = excludes.iter().any(|f| {
+                    let f = f.trim_end_matches('/');
+                    p == f || p.starts_with(f)
+                });
+                println!("Dir: {p}, excluded: {excluded}");
+                !excluded
+            });
         }
     }
 
@@ -356,7 +389,11 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
         const SPAWN_STAGGER_MS: u64 = 10;
 
         let is_tty = atty::is(atty::Stream::Stdout);
-        let mp = if is_tty { Some(MultiProgress::new()) } else { None };
+        let mp = if is_tty {
+            Some(MultiProgress::new())
+        } else {
+            None
+        };
         let spinner_style = ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
             .unwrap()
             .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
@@ -381,7 +418,8 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
             };
 
             let dir = PathBuf::from(dir);
-            let dir_name = dir.file_name()
+            let dir_name = dir
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(".")
                 .to_string();
@@ -393,25 +431,37 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
 
             // Set initial spinner message
             if let Some(ref pb) = pb {
-                pb.set_message(format!("{}: running...", dir_name));
+                pb.set_message(format!("{dir_name}: running..."));
             }
 
             let handle = std::thread::spawn(move || {
-                let result = execute_command_in_directory_capturing(&dir, &command, &config, &aliases);
+                let result =
+                    execute_command_in_directory_capturing(&dir, &command, &config, &aliases);
 
                 // Update spinner with result
                 if let Some(ref pb) = pb {
                     if result.success {
                         pb.finish_with_message(format!("{} {}", "✓".green(), dir_name.green()));
                     } else {
-                        pb.finish_with_message(format!("{} {} (exit {})", "✗".red(), dir_name.red(), result.exit_code));
+                        pb.finish_with_message(format!(
+                            "{} {} (exit {})",
+                            "✗".red(),
+                            dir_name.red(),
+                            result.exit_code
+                        ));
                     }
                 } else {
                     // Non-TTY output
                     if result.success {
                         println!("{} {} {}", prefix, "✓".green(), dir_name.green());
                     } else {
-                        println!("{} {} {} (exit {})", prefix, "✗".red(), dir_name.red(), result.exit_code);
+                        println!(
+                            "{} {} {} (exit {})",
+                            prefix,
+                            "✗".red(),
+                            dir_name.red(),
+                            result.exit_code
+                        );
                     }
                 }
 
@@ -428,9 +478,9 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
         // Print captured output after all spinners complete
         if !config.silent {
             let results = results.lock().unwrap();
-            let has_any_output = results.iter().any(|r| {
-                !r.stdout.trim().is_empty() || !r.stderr.trim().is_empty()
-            });
+            let has_any_output = results
+                .iter()
+                .any(|r| !r.stdout.trim().is_empty() || !r.stderr.trim().is_empty());
 
             if has_any_output {
                 // Two newlines: one to ensure we're past the spinner area, one for the blank line
@@ -438,11 +488,14 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
             }
 
             for result in results.iter() {
-                let dir_name = result.directory.file_name()
+                let dir_name = result
+                    .directory
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(".");
 
-                let has_output = !result.stdout.trim().is_empty() || !result.stderr.trim().is_empty();
+                let has_output =
+                    !result.stdout.trim().is_empty() || !result.stderr.trim().is_empty();
                 if has_output {
                     if result.success {
                         println!("{} {}:", "✓".green(), dir_name.green());
@@ -455,7 +508,7 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
                     if !result.stderr.trim().is_empty() {
                         print!("{}", result.stderr);
                     }
-                    println!();  // Blank line after each repo's output
+                    println!(); // Blank line after each repo's output
                 }
             }
         }
@@ -467,7 +520,10 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
             Ok(())
         };
 
-        config_ref.directories.iter().try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
+        config_ref
+            .directories
+            .iter()
+            .try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
     }
 
     let results = results.lock().unwrap();
@@ -479,9 +535,20 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
         if failed_count == 0 {
             println!("{} commands complete", total.to_string().green());
         } else {
-            println!("\nSummary: {} {} out of {} commands failed", "✗".red(), failed_count.to_string().red(), total);
+            println!(
+                "\nSummary: {} {} out of {} commands failed",
+                "✗".red(),
+                failed_count.to_string().red(),
+                total
+            );
             for result in &failed {
-                println!("\n{} {}: {} (Exit code {}) ", "✗".red(), result.directory.display(), result.command, result.exit_code);
+                println!(
+                    "\n{} {}: {} (Exit code {}) ",
+                    "✗".red(),
+                    result.directory.display(),
+                    result.command,
+                    result.exit_code
+                );
             }
             println!();
         }
@@ -500,15 +567,15 @@ pub fn should_ignore(path: &Path, ignore: &[String]) -> bool {
 
 pub fn parse_config(config_path: &Path) -> Result<LoopConfig> {
     let config_str = fs::read_to_string(config_path)
-        .with_context(|| format!("Failed to read looprc config file: {:?}", config_path))?;
+        .with_context(|| format!("Failed to read looprc config file: {config_path:?}"))?;
     let config: LoopConfig = serde_json::from_str(&config_str)
-        .with_context(|| format!("Failed to parse looprc config file: {:?}", config_path))?;
+        .with_context(|| format!("Failed to parse looprc config file: {config_path:?}"))?;
     Ok(config)
 }
 
 pub fn get_aliases() -> HashMap<String, String> {
     let mut aliases = HashMap::new();
-    
+
     if let Some(home) = env::var_os("HOME") {
         let global_looprc = PathBuf::from(home).join(".looprc");
         if global_looprc.exists() {
@@ -524,7 +591,11 @@ pub fn get_aliases() -> HashMap<String, String> {
             for line in stdout.lines() {
                 if let Some((alias, command)) = line.split_once('=') {
                     let alias = alias.trim().trim_start_matches("alias ").to_string();
-                    let command = command.trim().trim_matches('\'').trim_matches('"').to_string();
+                    let command = command
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .to_string();
                     aliases.insert(alias, command);
                 }
             }
