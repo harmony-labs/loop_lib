@@ -98,6 +98,7 @@ fn test_run() {
         add_aliases_to_global_looprc: false,
         include_filters: None,
         exclude_filters: None,
+        parallel: false,
     };
 
     let result = run(&config, "echo test");
@@ -162,6 +163,160 @@ fn test_run_without_looprc() {
         add_aliases_to_global_looprc: false,
         include_filters: None,
         exclude_filters: None,
+        parallel: false,
+    };
+
+    let result = run(&config, "echo test");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_run_parallel() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("dir1");
+    let dir2 = temp_dir.path().join("dir2");
+    let dir3 = temp_dir.path().join("dir3");
+    fs::create_dir(&dir1).unwrap();
+    fs::create_dir(&dir2).unwrap();
+    fs::create_dir(&dir3).unwrap();
+
+    let config = LoopConfig {
+        directories: vec![
+            dir1.to_str().unwrap().to_string(),
+            dir2.to_str().unwrap().to_string(),
+            dir3.to_str().unwrap().to_string(),
+        ],
+        ignore: vec![],
+        verbose: false,
+        silent: true,
+        add_aliases_to_global_looprc: false,
+        include_filters: None,
+        exclude_filters: None,
+        parallel: true,
+    };
+
+    let result = run(&config, "echo test");
+    assert!(result.is_ok());
+
+    // Test with a failing command in parallel mode
+    let result = run(&config, "false");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_execute_command_in_directory_capturing() {
+    let config = LoopConfig {
+        verbose: false,
+        silent: true,
+        ..Default::default()
+    };
+    let aliases = HashMap::new();
+    let temp_dir = TempDir::new().unwrap();
+
+    let result = execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases);
+    assert!(result.success);
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.contains("hello"));
+
+    let result = execute_command_in_directory_capturing(temp_dir.path(), "false", &config, &aliases);
+    assert!(!result.success);
+    assert_eq!(result.exit_code, 1);
+}
+
+#[test]
+fn test_execute_command_in_directory_capturing_stderr() {
+    let config = LoopConfig {
+        verbose: false,
+        silent: true,
+        ..Default::default()
+    };
+    let aliases = HashMap::new();
+    let temp_dir = TempDir::new().unwrap();
+
+    // Command that writes to stderr
+    let result = execute_command_in_directory_capturing(temp_dir.path(), "echo error >&2", &config, &aliases);
+    assert!(result.success);
+    assert!(result.stderr.contains("error"));
+}
+
+#[test]
+fn test_execute_command_nonexistent_directory() {
+    let config = LoopConfig {
+        verbose: false,
+        silent: true,
+        ..Default::default()
+    };
+    let aliases = HashMap::new();
+    let nonexistent = Path::new("/nonexistent/path/that/does/not/exist");
+
+    let result = execute_command_in_directory_capturing(nonexistent, "echo test", &config, &aliases);
+    assert!(!result.success);
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stderr.contains("does not exist"));
+}
+
+#[test]
+fn test_command_result_default() {
+    let result = CommandResult::default();
+    assert!(!result.success);
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.is_empty());
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
+fn test_include_filters() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("project_a");
+    let dir2 = temp_dir.path().join("project_b");
+    let dir3 = temp_dir.path().join("other");
+    fs::create_dir(&dir1).unwrap();
+    fs::create_dir(&dir2).unwrap();
+    fs::create_dir(&dir3).unwrap();
+
+    let config = LoopConfig {
+        directories: vec![
+            dir1.to_str().unwrap().to_string(),
+            dir2.to_str().unwrap().to_string(),
+            dir3.to_str().unwrap().to_string(),
+        ],
+        ignore: vec![],
+        verbose: false,
+        silent: true,
+        add_aliases_to_global_looprc: false,
+        include_filters: Some(vec!["project".to_string()]),
+        exclude_filters: None,
+        parallel: false,
+    };
+
+    // The run function should only execute on directories matching the filter
+    let result = run(&config, "echo test");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_exclude_filters() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("project_a");
+    let dir2 = temp_dir.path().join("project_b");
+    let dir3 = temp_dir.path().join("excluded");
+    fs::create_dir(&dir1).unwrap();
+    fs::create_dir(&dir2).unwrap();
+    fs::create_dir(&dir3).unwrap();
+
+    let config = LoopConfig {
+        directories: vec![
+            dir1.to_str().unwrap().to_string(),
+            dir2.to_str().unwrap().to_string(),
+            dir3.to_str().unwrap().to_string(),
+        ],
+        ignore: vec![],
+        verbose: false,
+        silent: true,
+        add_aliases_to_global_looprc: false,
+        include_filters: None,
+        exclude_filters: Some(vec!["excluded".to_string()]),
+        parallel: false,
     };
 
     let result = run(&config, "echo test");
