@@ -102,6 +102,9 @@ fn test_run() {
         include_filters: None,
         exclude_filters: None,
         parallel: false,
+        dry_run: false,
+        json_output: false,
+        spawn_stagger_ms: 0,
     };
 
     let result = run(&config, "echo test");
@@ -167,6 +170,9 @@ fn test_run_without_looprc() {
         include_filters: None,
         exclude_filters: None,
         parallel: false,
+        dry_run: false,
+        json_output: false,
+        spawn_stagger_ms: 0,
     };
 
     let result = run(&config, "echo test");
@@ -196,6 +202,9 @@ fn test_run_parallel() {
         include_filters: None,
         exclude_filters: None,
         parallel: true,
+        dry_run: false,
+        json_output: false,
+        spawn_stagger_ms: 0,
     };
 
     let result = run(&config, "echo test");
@@ -298,6 +307,9 @@ fn test_include_filters() {
         include_filters: Some(vec!["project".to_string()]),
         exclude_filters: None,
         parallel: false,
+        dry_run: false,
+        json_output: false,
+        spawn_stagger_ms: 0,
     };
 
     // The run function should only execute on directories matching the filter
@@ -328,8 +340,370 @@ fn test_exclude_filters() {
         include_filters: None,
         exclude_filters: Some(vec!["excluded".to_string()]),
         parallel: false,
+        dry_run: false,
+        json_output: false,
+        spawn_stagger_ms: 0,
     };
 
     let result = run(&config, "echo test");
     assert!(result.is_ok());
+}
+
+// ============================================================================
+// Tests for new dry_run and json_output functionality
+// ============================================================================
+
+#[test]
+fn test_loop_config_default_includes_new_fields() {
+    let config = LoopConfig::default();
+    assert!(!config.dry_run);
+    assert!(!config.json_output);
+    assert!(!config.parallel);
+}
+
+#[test]
+fn test_dry_run_does_not_execute() {
+    let temp_dir = TempDir::new().unwrap();
+    let marker_file = temp_dir.path().join("marker.txt");
+
+    let config = LoopConfig {
+        directories: vec![temp_dir.path().to_str().unwrap().to_string()],
+        dry_run: true,
+        silent: true,
+        ..Default::default()
+    };
+
+    // This command would create a file if executed
+    let cmd = format!("touch {}", marker_file.display());
+    let result = run(&config, &cmd);
+    assert!(result.is_ok());
+
+    // File should NOT exist because dry_run is true
+    assert!(!marker_file.exists(), "dry_run should not execute commands");
+}
+
+#[test]
+fn test_dry_run_returns_success() {
+    let temp_dir = TempDir::new().unwrap();
+
+    let config = LoopConfig {
+        directories: vec![temp_dir.path().to_str().unwrap().to_string()],
+        dry_run: true,
+        silent: true,
+        ..Default::default()
+    };
+
+    // Even a command that would fail should succeed in dry_run mode
+    let result = run(&config, "false");
+    assert!(result.is_ok(), "dry_run should always succeed");
+}
+
+#[test]
+fn test_execute_command_in_directory_dry_run() {
+    let config = LoopConfig {
+        dry_run: true,
+        silent: true,
+        ..Default::default()
+    };
+    let aliases = HashMap::new();
+    let temp_dir = TempDir::new().unwrap();
+
+    let result = execute_command_in_directory(temp_dir.path(), "false", &config, &aliases);
+    assert!(result.success, "dry_run should return success");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[test]
+fn test_execute_command_in_directory_capturing_dry_run() {
+    let config = LoopConfig {
+        dry_run: true,
+        silent: true,
+        ..Default::default()
+    };
+    let aliases = HashMap::new();
+    let temp_dir = TempDir::new().unwrap();
+
+    let result =
+        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases);
+    assert!(result.success);
+    assert!(result.stdout.contains("[DRY RUN]"));
+    assert!(result.stdout.contains("echo hello"));
+}
+
+#[test]
+fn test_dir_command_struct() {
+    let cmd = DirCommand {
+        dir: "/some/path".to_string(),
+        cmd: "git status".to_string(),
+    };
+    assert_eq!(cmd.dir, "/some/path");
+    assert_eq!(cmd.cmd, "git status");
+}
+
+#[test]
+fn test_run_commands_empty_list() {
+    let config = LoopConfig::default();
+    let commands: Vec<DirCommand> = vec![];
+    let result = run_commands(&config, &commands);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_run_commands_sequential() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("dir1");
+    let dir2 = temp_dir.path().join("dir2");
+    fs::create_dir(&dir1).unwrap();
+    fs::create_dir(&dir2).unwrap();
+
+    let config = LoopConfig {
+        parallel: false,
+        silent: true,
+        ..Default::default()
+    };
+
+    let commands = vec![
+        DirCommand {
+            dir: dir1.to_str().unwrap().to_string(),
+            cmd: "echo test1".to_string(),
+        },
+        DirCommand {
+            dir: dir2.to_str().unwrap().to_string(),
+            cmd: "echo test2".to_string(),
+        },
+    ];
+
+    let result = run_commands(&config, &commands);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_run_commands_parallel() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("dir1");
+    let dir2 = temp_dir.path().join("dir2");
+    fs::create_dir(&dir1).unwrap();
+    fs::create_dir(&dir2).unwrap();
+
+    let config = LoopConfig {
+        parallel: true,
+        silent: true,
+        ..Default::default()
+    };
+
+    let commands = vec![
+        DirCommand {
+            dir: dir1.to_str().unwrap().to_string(),
+            cmd: "echo test1".to_string(),
+        },
+        DirCommand {
+            dir: dir2.to_str().unwrap().to_string(),
+            cmd: "echo test2".to_string(),
+        },
+    ];
+
+    let result = run_commands(&config, &commands);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_run_commands_with_different_commands() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("dir1");
+    let dir2 = temp_dir.path().join("dir2");
+    fs::create_dir(&dir1).unwrap();
+    fs::create_dir(&dir2).unwrap();
+
+    // Create files to verify different commands were executed
+    let file1 = dir1.join("file1.txt");
+    let file2 = dir2.join("file2.txt");
+
+    let config = LoopConfig {
+        parallel: false,
+        silent: true,
+        ..Default::default()
+    };
+
+    let commands = vec![
+        DirCommand {
+            dir: dir1.to_str().unwrap().to_string(),
+            cmd: format!("touch {}", file1.display()),
+        },
+        DirCommand {
+            dir: dir2.to_str().unwrap().to_string(),
+            cmd: format!("touch {}", file2.display()),
+        },
+    ];
+
+    let result = run_commands(&config, &commands);
+    assert!(result.is_ok());
+    assert!(file1.exists(), "First command should have created file1");
+    assert!(file2.exists(), "Second command should have created file2");
+}
+
+#[test]
+fn test_run_commands_dry_run() {
+    let temp_dir = TempDir::new().unwrap();
+    let marker_file = temp_dir.path().join("marker.txt");
+
+    let config = LoopConfig {
+        dry_run: true,
+        silent: true,
+        ..Default::default()
+    };
+
+    let commands = vec![DirCommand {
+        dir: temp_dir.path().to_str().unwrap().to_string(),
+        cmd: format!("touch {}", marker_file.display()),
+    }];
+
+    let result = run_commands(&config, &commands);
+    assert!(result.is_ok());
+    assert!(!marker_file.exists(), "dry_run should not execute commands");
+}
+
+#[test]
+fn test_run_commands_failure_handling() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("dir1");
+    fs::create_dir(&dir1).unwrap();
+
+    let config = LoopConfig {
+        parallel: false,
+        silent: true,
+        ..Default::default()
+    };
+
+    let commands = vec![DirCommand {
+        dir: dir1.to_str().unwrap().to_string(),
+        cmd: "false".to_string(), // This command always fails
+    }];
+
+    let result = run_commands(&config, &commands);
+    assert!(result.is_err(), "Should return error when command fails");
+}
+
+#[test]
+fn test_run_commands_failure_in_dry_run_succeeds() {
+    let temp_dir = TempDir::new().unwrap();
+
+    let config = LoopConfig {
+        dry_run: true,
+        silent: true,
+        ..Default::default()
+    };
+
+    let commands = vec![DirCommand {
+        dir: temp_dir.path().to_str().unwrap().to_string(),
+        cmd: "false".to_string(),
+    }];
+
+    let result = run_commands(&config, &commands);
+    assert!(result.is_ok(), "dry_run should succeed even for failing commands");
+}
+
+#[test]
+fn test_json_output_structures() {
+    // Test JsonOutput serialization
+    let output = JsonOutput {
+        success: true,
+        results: vec![JsonCommandResult {
+            directory: "/test".to_string(),
+            command: "echo hello".to_string(),
+            success: true,
+            exit_code: 0,
+            stdout: "hello\n".to_string(),
+            stderr: String::new(),
+        }],
+        summary: JsonSummary {
+            total: 1,
+            succeeded: 1,
+            failed: 0,
+            dry_run: false,
+        },
+    };
+
+    let json = serde_json::to_string(&output).unwrap();
+    assert!(json.contains("\"success\":true"));
+    assert!(json.contains("\"directory\":\"/test\""));
+    assert!(json.contains("\"total\":1"));
+}
+
+#[test]
+fn test_json_output_skips_empty_strings() {
+    let result = JsonCommandResult {
+        directory: "/test".to_string(),
+        command: "echo".to_string(),
+        success: true,
+        exit_code: 0,
+        stdout: String::new(),
+        stderr: String::new(),
+    };
+
+    let json = serde_json::to_string(&result).unwrap();
+    // Empty stdout/stderr should be skipped due to skip_serializing_if
+    assert!(!json.contains("\"stdout\":\"\""));
+    assert!(!json.contains("\"stderr\":\"\""));
+}
+
+#[test]
+fn test_loop_config_serialization() {
+    let config = LoopConfig {
+        directories: vec!["dir1".to_string()],
+        dry_run: true,
+        json_output: true,
+        parallel: true,
+        ..Default::default()
+    };
+
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(json.contains("\"dry_run\":true"));
+    assert!(json.contains("\"json_output\":true"));
+    assert!(json.contains("\"parallel\":true"));
+}
+
+#[test]
+fn test_loop_config_deserialization_with_new_fields() {
+    let json = r#"{
+        "directories": ["test"],
+        "dry_run": true,
+        "json_output": true,
+        "parallel": false
+    }"#;
+
+    let config: LoopConfig = serde_json::from_str(json).unwrap();
+    assert!(config.dry_run);
+    assert!(config.json_output);
+    assert!(!config.parallel);
+}
+
+#[test]
+fn test_loop_config_deserialization_missing_new_fields() {
+    // Old config format without new fields should deserialize with defaults
+    let json = r#"{
+        "directories": ["test"],
+        "verbose": false
+    }"#;
+
+    let config: LoopConfig = serde_json::from_str(json).unwrap();
+    assert!(!config.dry_run, "dry_run should default to false");
+    assert!(!config.json_output, "json_output should default to false");
+    assert!(!config.parallel, "parallel should default to false");
+}
+
+#[test]
+fn test_dir_command_serialization() {
+    let cmd = DirCommand {
+        dir: "/path/to/dir".to_string(),
+        cmd: "git status".to_string(),
+    };
+
+    let json = serde_json::to_string(&cmd).unwrap();
+    assert!(json.contains("\"dir\":\"/path/to/dir\""));
+    assert!(json.contains("\"cmd\":\"git status\""));
+
+    // Test deserialization
+    let parsed: DirCommand = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.dir, "/path/to/dir");
+    assert_eq!(parsed.cmd, "git status");
 }

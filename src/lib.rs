@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -29,6 +30,21 @@ pub struct LoopConfig {
     pub exclude_filters: Option<Vec<String>>,
     #[serde(default)]
     pub parallel: bool,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub json_output: bool,
+    /// Milliseconds to wait between spawning threads in parallel mode.
+    /// Default is 0 (no stagger). Set to e.g. 10 to spread out connections.
+    #[serde(default)]
+    pub spawn_stagger_ms: u64,
+}
+
+/// A command to execute in a specific directory
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DirCommand {
+    pub dir: String,
+    pub cmd: String,
 }
 
 impl Default for LoopConfig {
@@ -42,6 +58,9 @@ impl Default for LoopConfig {
             include_filters: None,
             exclude_filters: None,
             parallel: false,
+            dry_run: false,
+            json_output: false,
+            spawn_stagger_ms: 0,
         }
     }
 }
@@ -184,6 +203,41 @@ pub fn execute_command_in_directory(
         };
     }
 
+    // Resolve aliases for display
+    let resolved_command = command
+        .split_whitespace()
+        .next()
+        .and_then(|cmd| aliases.get(cmd).map(|alias_cmd| (cmd, alias_cmd)))
+        .map(|(cmd, alias_cmd)| command.replacen(cmd, alias_cmd, 1))
+        .unwrap_or_else(|| command.to_string());
+
+    // Dry run mode: print what would be executed without running it
+    if config.dry_run {
+        let dir_display = if dir.as_os_str() == "." {
+            if let Ok(cwd) = std::env::current_dir() {
+                cwd.display().to_string()
+            } else {
+                ".".to_string()
+            }
+        } else {
+            dir.display().to_string()
+        };
+        println!(
+            "{} Would execute in {}:\n  {}",
+            "[DRY RUN]".cyan(),
+            dir_display.yellow(),
+            resolved_command
+        );
+        return CommandResult {
+            success: true,
+            exit_code: 0,
+            directory: dir.to_path_buf(),
+            command: resolved_command,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+    }
+
     if config.verbose {
         println!("Executing in directory: {}", dir.display());
     }
@@ -193,18 +247,11 @@ pub fn execute_command_in_directory(
         io::stdout().flush().unwrap();
     }
 
-    let command = command
-        .split_whitespace()
-        .next()
-        .and_then(|cmd| aliases.get(cmd).map(|alias_cmd| (cmd, alias_cmd)))
-        .map(|(cmd, alias_cmd)| command.replacen(cmd, alias_cmd, 1))
-        .unwrap_or_else(|| command.to_string());
-
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
     let mut child = Command::new(&shell)
         .arg("-c")
-        .arg(&command)
+        .arg(&resolved_command)
         .current_dir(dir)
         .envs(env::vars())
         .stdout(if config.silent {
@@ -221,7 +268,7 @@ pub fn execute_command_in_directory(
         .with_context(|| {
             format!(
                 "Failed to execute command '{}' in directory '{}'",
-                command,
+                resolved_command,
                 dir.display()
             )
         })
@@ -261,7 +308,7 @@ pub fn execute_command_in_directory(
         success,
         exit_code,
         directory: dir.to_path_buf(),
-        command: command.to_string(),
+        command: resolved_command,
         stdout: String::new(), // Sequential mode uses Stdio::inherit(), so no capture
         stderr: String::new(),
     }
@@ -271,7 +318,7 @@ pub fn execute_command_in_directory(
 pub fn execute_command_in_directory_capturing(
     dir: &Path,
     command: &str,
-    _config: &LoopConfig,
+    config: &LoopConfig,
     aliases: &HashMap<String, String>,
 ) -> CommandResult {
     if !dir.exists() {
@@ -285,18 +332,40 @@ pub fn execute_command_in_directory_capturing(
         };
     }
 
-    let command = command
+    let resolved_command = command
         .split_whitespace()
         .next()
         .and_then(|cmd| aliases.get(cmd).map(|alias_cmd| (cmd, alias_cmd)))
         .map(|(cmd, alias_cmd)| command.replacen(cmd, alias_cmd, 1))
         .unwrap_or_else(|| command.to_string());
 
+    // Dry run mode: return what would be executed without running it
+    if config.dry_run {
+        let dir_display = if dir.as_os_str() == "." {
+            if let Ok(cwd) = std::env::current_dir() {
+                cwd.display().to_string()
+            } else {
+                ".".to_string()
+            }
+        } else {
+            dir.display().to_string()
+        };
+        let stdout_msg = format!("[DRY RUN] Would execute in {dir_display}:\n  {resolved_command}");
+        return CommandResult {
+            success: true,
+            exit_code: 0,
+            directory: dir.to_path_buf(),
+            command: resolved_command,
+            stdout: stdout_msg,
+            stderr: String::new(),
+        };
+    }
+
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
     let output = Command::new(&shell)
         .arg("-c")
-        .arg(&command)
+        .arg(&resolved_command)
         .current_dir(dir)
         .envs(env::vars())
         .stdout(Stdio::piped())
@@ -311,7 +380,7 @@ pub fn execute_command_in_directory_capturing(
                 success,
                 exit_code,
                 directory: dir.to_path_buf(),
-                command: command.to_string(),
+                command: resolved_command,
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
                 stderr: String::from_utf8_lossy(&output.stderr).to_string(),
             }
@@ -320,7 +389,7 @@ pub fn execute_command_in_directory_capturing(
             success: false,
             exit_code: -1,
             directory: dir.to_path_buf(),
-            command: command.to_string(),
+            command: resolved_command,
             stdout: String::new(),
             stderr: format!("Failed to execute: {e}"),
         },
@@ -350,8 +419,15 @@ pub fn expand_directories(directories: &[String], ignore: &[String]) -> Result<V
     Ok(expanded)
 }
 
+/// Run the same command across multiple directories.
+/// This applies include/exclude filters and then delegates to the unified execution engine.
 pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
-    // Apply include/exclude filters
+    // Handle special case: add_aliases_to_global_looprc
+    if orig_config.add_aliases_to_global_looprc {
+        return add_aliases_to_global_looprc();
+    }
+
+    // Apply include/exclude filters to directories
     let mut dirs = orig_config.directories.clone();
 
     if let Some(ref includes) = orig_config.include_filters {
@@ -362,35 +438,82 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
 
     if let Some(ref excludes) = orig_config.exclude_filters {
         if !excludes.is_empty() {
-            println!("Exclude filters: {excludes:?}");
+            if orig_config.verbose {
+                println!("Exclude filters: {excludes:?}");
+            }
             dirs.retain(|p| {
                 let excluded = excludes.iter().any(|f| {
                     let f = f.trim_end_matches('/');
                     p == f || p.starts_with(f)
                 });
-                println!("Dir: {p}, excluded: {excluded}");
+                if orig_config.verbose {
+                    println!("Dir: {p}, excluded: {excluded}");
+                }
                 !excluded
             });
         }
     }
 
-    let mut config = orig_config.clone();
-    config.directories = dirs;
-    let config_ref = &config;
-    if config.add_aliases_to_global_looprc {
-        return add_aliases_to_global_looprc();
+    // Build DirCommand list with same command for each directory
+    let commands: Vec<DirCommand> = dirs
+        .iter()
+        .map(|dir| DirCommand {
+            dir: dir.clone(),
+            cmd: command.to_string(),
+        })
+        .collect();
+
+    // Delegate to unified execution engine
+    execute_commands_internal(orig_config, &commands)
+}
+
+/// JSON output structure for command results
+#[derive(Debug, Serialize)]
+pub struct JsonOutput {
+    pub success: bool,
+    pub results: Vec<JsonCommandResult>,
+    pub summary: JsonSummary,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonCommandResult {
+    pub directory: String,
+    pub command: String,
+    pub success: bool,
+    pub exit_code: i32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stdout: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stderr: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonSummary {
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub dry_run: bool,
+}
+
+// ============================================================================
+// Unified Execution Engine
+// ============================================================================
+
+/// Internal execution engine that handles both parallel and sequential execution.
+/// This is the unified implementation used by both `run()` and `run_commands()`.
+fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Result<()> {
+    if commands.is_empty() {
+        return Ok(());
     }
 
     let results = Arc::new(Mutex::new(Vec::new()));
     let aliases = Arc::new(get_aliases());
 
     if config.parallel {
-        // Parallel execution with staggered spawns and spinners
-        const SPAWN_STAGGER_MS: u64 = 10;
-
-        let is_tty = atty::is(atty::Stream::Stdout);
+        // Parallel execution using rayon thread pool with spinners
+        let is_tty = atty::is(atty::Stream::Stdout) && !config.json_output;
         let mp = if is_tty {
-            Some(MultiProgress::new())
+            Some(Arc::new(MultiProgress::new()))
         } else {
             None
         };
@@ -398,85 +521,90 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
             .unwrap()
             .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
 
-        let total = config_ref.directories.len();
-        let mut handles = vec![];
+        let total = commands.len();
 
-        for (i, dir) in config_ref.directories.iter().enumerate() {
-            // Small delay between spawns to spread out connections
-            if i > 0 {
-                std::thread::sleep(Duration::from_millis(SPAWN_STAGGER_MS));
-            }
-
-            let pb = if let Some(ref mp) = mp {
-                let pb = mp.add(ProgressBar::new_spinner());
-                pb.set_style(spinner_style.clone());
-                pb.set_prefix(format!("[{}/{}]", i + 1, total));
-                pb.enable_steady_tick(Duration::from_millis(100));
-                Some(pb)
-            } else {
-                None
-            };
-
-            let dir = PathBuf::from(dir);
-            let dir_name = dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(".")
-                .to_string();
-            let command = command.to_string();
-            let config = config_ref.clone();
-            let aliases = Arc::clone(&aliases);
-            let results = Arc::clone(&results);
-            let prefix = format!("[{}/{}]", i + 1, total);
-
-            // Set initial spinner message
-            if let Some(ref pb) = pb {
-                pb.set_message(format!("{dir_name}: running..."));
-            }
-
-            let handle = std::thread::spawn(move || {
-                let result =
-                    execute_command_in_directory_capturing(&dir, &command, &config, &aliases);
-
-                // Update spinner with result
-                if let Some(ref pb) = pb {
-                    if result.success {
-                        pb.finish_with_message(format!("{} {}", "✓".green(), dir_name.green()));
-                    } else {
-                        pb.finish_with_message(format!(
-                            "{} {} (exit {})",
-                            "✗".red(),
-                            dir_name.red(),
-                            result.exit_code
-                        ));
-                    }
+        // Pre-create all spinners (in order) so they display in correct sequence
+        let spinners: Vec<Option<ProgressBar>> = commands
+            .iter()
+            .enumerate()
+            .map(|(i, dir_cmd)| {
+                if let Some(ref mp) = mp {
+                    let pb = mp.add(ProgressBar::new_spinner());
+                    pb.set_style(spinner_style.clone());
+                    pb.set_prefix(format!("[{}/{}]", i + 1, total));
+                    let dir_name = PathBuf::from(&dir_cmd.dir)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(".")
+                        .to_string();
+                    pb.set_message(format!("{dir_name}: pending..."));
+                    pb.enable_steady_tick(Duration::from_millis(100));
+                    Some(pb)
                 } else {
-                    // Non-TTY output
-                    if result.success {
-                        println!("{} {} {}", prefix, "✓".green(), dir_name.green());
+                    None
+                }
+            })
+            .collect();
+
+        // Use rayon's parallel iterator for bounded thread pool execution
+        let parallel_results: Vec<CommandResult> = commands
+            .par_iter()
+            .enumerate()
+            .map(|(i, dir_cmd)| {
+                let dir = PathBuf::from(&dir_cmd.dir);
+                let dir_name = dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(".")
+                    .to_string();
+                let prefix = format!("[{}/{}]", i + 1, total);
+
+                // Update spinner to show running
+                if let Some(ref pb) = spinners[i] {
+                    pb.set_message(format!("{dir_name}: running..."));
+                }
+
+                let result =
+                    execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases);
+
+                // Update spinner with result (only if not JSON output)
+                if !config.json_output {
+                    if let Some(ref pb) = spinners[i] {
+                        if result.success {
+                            pb.finish_with_message(format!("{} {}", "✓".green(), dir_name.green()));
+                        } else {
+                            pb.finish_with_message(format!(
+                                "{} {} (exit {})",
+                                "✗".red(),
+                                dir_name.red(),
+                                result.exit_code
+                            ));
+                        }
                     } else {
-                        println!(
-                            "{} {} {} (exit {})",
-                            prefix,
-                            "✗".red(),
-                            dir_name.red(),
-                            result.exit_code
-                        );
+                        // Non-TTY output
+                        if result.success {
+                            println!("{} {} {}", prefix, "✓".green(), dir_name.green());
+                        } else {
+                            println!(
+                                "{} {} {} (exit {})",
+                                prefix,
+                                "✗".red(),
+                                dir_name.red(),
+                                result.exit_code
+                            );
+                        }
                     }
                 }
 
-                results.lock().unwrap().push(result);
-            });
-            handles.push(handle);
-        }
+                result
+            })
+            .collect();
 
-        // Wait for all threads to complete
-        for h in handles {
-            let _ = h.join();
-        }
+        // Store results (already collected from rayon)
+        results.lock().unwrap().extend(parallel_results);
 
-        // Print captured output after all spinners complete
-        if !config.silent {
+        // Print captured output after all spinners complete (if not JSON)
+        if !config.silent && !config.json_output {
             let results = results.lock().unwrap();
             let has_any_output = results
                 .iter()
@@ -514,25 +642,61 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
         }
     } else {
         // Sequential execution
-        let run_command = |dir: &PathBuf| -> Result<()> {
-            let result = execute_command_in_directory(dir, command, config_ref, &aliases);
+        for dir_cmd in commands {
+            let dir = PathBuf::from(&dir_cmd.dir);
+            let result = if config.json_output {
+                // Capture output for JSON mode
+                execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases)
+            } else {
+                execute_command_in_directory(&dir, &dir_cmd.cmd, config, &aliases)
+            };
             results.lock().unwrap().push(result);
-            Ok(())
-        };
-
-        config_ref
-            .directories
-            .iter()
-            .try_for_each(|dir| run_command(&PathBuf::from(dir)))?;
+        }
     }
 
+    // Build results summary
     let results = results.lock().unwrap();
     let total = results.len();
     let failed: Vec<_> = results.iter().filter(|r| !r.success).collect();
     let failed_count = failed.len();
 
-    if !config.silent {
-        if failed_count == 0 {
+    // Output results
+    if config.json_output {
+        // JSON output mode
+        let json_results: Vec<JsonCommandResult> = results
+            .iter()
+            .map(|r| JsonCommandResult {
+                directory: r.directory.display().to_string(),
+                command: r.command.clone(),
+                success: r.success,
+                exit_code: r.exit_code,
+                stdout: r.stdout.clone(),
+                stderr: r.stderr.clone(),
+            })
+            .collect();
+
+        let output = JsonOutput {
+            success: failed_count == 0,
+            results: json_results,
+            summary: JsonSummary {
+                total,
+                succeeded: total - failed_count,
+                failed: failed_count,
+                dry_run: config.dry_run,
+            },
+        };
+
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if !config.silent {
+        // Text output mode
+        if config.dry_run {
+            println!(
+                "\n{} Would run {} command(s) across {} directories",
+                "[DRY RUN]".cyan(),
+                total.to_string().yellow(),
+                total.to_string().yellow()
+            );
+        } else if failed_count == 0 {
             println!("{} commands complete", total.to_string().green());
         } else {
             println!(
@@ -554,11 +718,17 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
         }
     }
 
-    if failed_count > 0 {
+    if failed_count > 0 && !config.dry_run {
         return Err(anyhow::anyhow!("At least one command failed"));
     }
 
     Ok(())
+}
+
+/// Execute a list of commands (each with its own directory)
+/// This is the unified execution engine for plugins.
+pub fn run_commands(config: &LoopConfig, commands: &[DirCommand]) -> Result<()> {
+    execute_commands_internal(config, commands)
 }
 
 pub fn should_ignore(path: &Path, ignore: &[String]) -> bool {
