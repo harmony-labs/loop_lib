@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -511,7 +511,7 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
 
     if config.parallel {
         // Parallel execution using rayon thread pool with spinners
-        let is_tty = atty::is(atty::Stream::Stdout) && !config.json_output;
+        let is_tty = std::io::stdout().is_terminal() && !config.json_output;
         let mp = if is_tty {
             Some(Arc::new(MultiProgress::new()))
         } else {
