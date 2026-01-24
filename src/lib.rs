@@ -444,7 +444,7 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
             dirs.retain(|p| {
                 let excluded = excludes.iter().any(|f| {
                     let f = f.trim_end_matches('/');
-                    p == f || p.starts_with(f)
+                    p.contains(f)
                 });
                 if orig_config.verbose {
                     println!("Dir: {p}, excluded: {excluded}");
