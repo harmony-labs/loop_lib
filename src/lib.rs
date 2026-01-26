@@ -727,8 +727,29 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
 
 /// Execute a list of commands (each with its own directory)
 /// This is the unified execution engine for plugins.
+/// Applies include/exclude filters from config before executing.
 pub fn run_commands(config: &LoopConfig, commands: &[DirCommand]) -> Result<()> {
-    execute_commands_internal(config, commands)
+    let mut filtered: Vec<DirCommand> = commands.to_vec();
+
+    if let Some(ref includes) = config.include_filters {
+        if !includes.is_empty() {
+            filtered.retain(|c| includes.iter().any(|f| c.dir.contains(f)));
+        }
+    }
+
+    if let Some(ref excludes) = config.exclude_filters {
+        if !excludes.is_empty() {
+            filtered.retain(|c| {
+                let excluded = excludes.iter().any(|f| {
+                    let f = f.trim_end_matches('/');
+                    c.dir.contains(f)
+                });
+                !excluded
+            });
+        }
+    }
+
+    execute_commands_internal(config, &filtered)
 }
 
 pub fn should_ignore(path: &Path, ignore: &[String]) -> bool {
