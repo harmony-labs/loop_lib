@@ -601,11 +601,11 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
             .collect();
 
         // Store results (already collected from rayon)
-        results.lock().unwrap().extend(parallel_results);
+        results.lock().unwrap_or_else(|e| e.into_inner()).extend(parallel_results);
 
         // Print captured output after all spinners complete (if not JSON)
         if !config.silent && !config.json_output {
-            let results = results.lock().unwrap();
+            let results = results.lock().unwrap_or_else(|e| e.into_inner());
             let has_any_output = results
                 .iter()
                 .any(|r| !r.stdout.trim().is_empty() || !r.stderr.trim().is_empty());
@@ -650,12 +650,12 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
             } else {
                 execute_command_in_directory(&dir, &dir_cmd.cmd, config, &aliases)
             };
-            results.lock().unwrap().push(result);
+            results.lock().unwrap_or_else(|e| e.into_inner()).push(result);
         }
     }
 
     // Build results summary
-    let results = results.lock().unwrap();
+    let results = results.lock().unwrap_or_else(|e| e.into_inner());
     let total = results.len();
     let failed: Vec<_> = results.iter().filter(|r| !r.success).collect();
     let failed_count = failed.len();
