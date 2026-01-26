@@ -45,6 +45,9 @@ pub struct LoopConfig {
 pub struct DirCommand {
     pub dir: String,
     pub cmd: String,
+    /// Environment variables to set for this command's subprocess
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
 }
 
 impl Default for LoopConfig {
@@ -185,6 +188,7 @@ pub fn execute_command_in_directory(
     command: &str,
     config: &LoopConfig,
     aliases: &HashMap<String, String>,
+    extra_env: Option<&HashMap<String, String>>,
 ) -> CommandResult {
     if !dir.exists() {
         println!("\nNo directory found for {}", dir.display());
@@ -249,11 +253,19 @@ pub fn execute_command_in_directory(
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
-    let mut child = Command::new(&shell)
+    let mut cmd_builder = Command::new(&shell);
+    cmd_builder
         .arg("-c")
         .arg(&resolved_command)
         .current_dir(dir)
-        .envs(env::vars())
+        .envs(env::vars());
+
+    // Apply plugin-specified environment variables (e.g., GIT_PAGER=cat)
+    if let Some(extra) = extra_env {
+        cmd_builder.envs(extra);
+    }
+
+    let mut child = cmd_builder
         .stdout(if config.silent {
             Stdio::null()
         } else {
@@ -320,6 +332,7 @@ pub fn execute_command_in_directory_capturing(
     command: &str,
     config: &LoopConfig,
     aliases: &HashMap<String, String>,
+    extra_env: Option<&HashMap<String, String>>,
 ) -> CommandResult {
     if !dir.exists() {
         return CommandResult {
@@ -363,11 +376,19 @@ pub fn execute_command_in_directory_capturing(
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
-    let output = Command::new(&shell)
+    let mut cmd_builder = Command::new(&shell);
+    cmd_builder
         .arg("-c")
         .arg(&resolved_command)
         .current_dir(dir)
-        .envs(env::vars())
+        .envs(env::vars());
+
+    // Apply plugin-specified environment variables (e.g., GIT_PAGER=cat)
+    if let Some(extra) = extra_env {
+        cmd_builder.envs(extra);
+    }
+
+    let output = cmd_builder
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output();
@@ -460,6 +481,7 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
         .map(|dir| DirCommand {
             dir: dir.clone(),
             cmd: command.to_string(),
+            env: None,
         })
         .collect();
 
@@ -565,7 +587,7 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                 }
 
                 let result =
-                    execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases);
+                    execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref());
 
                 // Update spinner with result (only if not JSON output)
                 if !config.json_output {
@@ -646,9 +668,9 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
             let dir = PathBuf::from(&dir_cmd.dir);
             let result = if config.json_output {
                 // Capture output for JSON mode
-                execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases)
+                execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref())
             } else {
-                execute_command_in_directory(&dir, &dir_cmd.cmd, config, &aliases)
+                execute_command_in_directory(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref())
             };
             results.lock().unwrap_or_else(|e| e.into_inner()).push(result);
         }

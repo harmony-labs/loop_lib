@@ -144,11 +144,11 @@ fn test_execute_command_in_directory() {
     let aliases = HashMap::new();
     let temp_dir = TempDir::new().unwrap();
 
-    let result = execute_command_in_directory(temp_dir.path(), "echo test", &config, &aliases);
+    let result = execute_command_in_directory(temp_dir.path(), "echo test", &config, &aliases, None);
     assert!(result.success);
     assert_eq!(result.exit_code, 0);
 
-    let result = execute_command_in_directory(temp_dir.path(), "false", &config, &aliases);
+    let result = execute_command_in_directory(temp_dir.path(), "false", &config, &aliases, None);
     assert!(!result.success);
     assert_eq!(result.exit_code, 1);
 }
@@ -226,13 +226,13 @@ fn test_execute_command_in_directory_capturing() {
     let temp_dir = TempDir::new().unwrap();
 
     let result =
-        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases);
+        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases, None);
     assert!(result.success);
     assert_eq!(result.exit_code, 0);
     assert!(result.stdout.contains("hello"));
 
     let result =
-        execute_command_in_directory_capturing(temp_dir.path(), "false", &config, &aliases);
+        execute_command_in_directory_capturing(temp_dir.path(), "false", &config, &aliases, None);
     assert!(!result.success);
     assert_eq!(result.exit_code, 1);
 }
@@ -253,6 +253,7 @@ fn test_execute_command_in_directory_capturing_stderr() {
         "echo error >&2",
         &config,
         &aliases,
+        None,
     );
     assert!(result.success);
     assert!(result.stderr.contains("error"));
@@ -269,7 +270,7 @@ fn test_execute_command_nonexistent_directory() {
     let nonexistent = Path::new("/nonexistent/path/that/does/not/exist");
 
     let result =
-        execute_command_in_directory_capturing(nonexistent, "echo test", &config, &aliases);
+        execute_command_in_directory_capturing(nonexistent, "echo test", &config, &aliases, None);
     assert!(!result.success);
     assert_eq!(result.exit_code, 1);
     assert!(result.stderr.contains("does not exist"));
@@ -408,7 +409,7 @@ fn test_execute_command_in_directory_dry_run() {
     let aliases = HashMap::new();
     let temp_dir = TempDir::new().unwrap();
 
-    let result = execute_command_in_directory(temp_dir.path(), "false", &config, &aliases);
+    let result = execute_command_in_directory(temp_dir.path(), "false", &config, &aliases, None);
     assert!(result.success, "dry_run should return success");
     assert_eq!(result.exit_code, 0);
 }
@@ -424,7 +425,7 @@ fn test_execute_command_in_directory_capturing_dry_run() {
     let temp_dir = TempDir::new().unwrap();
 
     let result =
-        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases);
+        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases, None);
     assert!(result.success);
     assert!(result.stdout.contains("[DRY RUN]"));
     assert!(result.stdout.contains("echo hello"));
@@ -435,6 +436,7 @@ fn test_dir_command_struct() {
     let cmd = DirCommand {
         dir: "/some/path".to_string(),
         cmd: "git status".to_string(),
+        env: None,
     };
     assert_eq!(cmd.dir, "/some/path");
     assert_eq!(cmd.cmd, "git status");
@@ -466,10 +468,12 @@ fn test_run_commands_sequential() {
         DirCommand {
             dir: dir1.to_str().unwrap().to_string(),
             cmd: "echo test1".to_string(),
+            env: None,
         },
         DirCommand {
             dir: dir2.to_str().unwrap().to_string(),
             cmd: "echo test2".to_string(),
+            env: None,
         },
     ];
 
@@ -495,10 +499,12 @@ fn test_run_commands_parallel() {
         DirCommand {
             dir: dir1.to_str().unwrap().to_string(),
             cmd: "echo test1".to_string(),
+            env: None,
         },
         DirCommand {
             dir: dir2.to_str().unwrap().to_string(),
             cmd: "echo test2".to_string(),
+            env: None,
         },
     ];
 
@@ -528,10 +534,12 @@ fn test_run_commands_with_different_commands() {
         DirCommand {
             dir: dir1.to_str().unwrap().to_string(),
             cmd: format!("touch {}", file1.display()),
+            env: None,
         },
         DirCommand {
             dir: dir2.to_str().unwrap().to_string(),
             cmd: format!("touch {}", file2.display()),
+            env: None,
         },
     ];
 
@@ -555,6 +563,7 @@ fn test_run_commands_dry_run() {
     let commands = vec![DirCommand {
         dir: temp_dir.path().to_str().unwrap().to_string(),
         cmd: format!("touch {}", marker_file.display()),
+        env: None,
     }];
 
     let result = run_commands(&config, &commands);
@@ -577,6 +586,7 @@ fn test_run_commands_failure_handling() {
     let commands = vec![DirCommand {
         dir: dir1.to_str().unwrap().to_string(),
         cmd: "false".to_string(), // This command always fails
+        env: None,
     }];
 
     let result = run_commands(&config, &commands);
@@ -596,6 +606,7 @@ fn test_run_commands_failure_in_dry_run_succeeds() {
     let commands = vec![DirCommand {
         dir: temp_dir.path().to_str().unwrap().to_string(),
         cmd: "false".to_string(),
+        env: None,
     }];
 
     let result = run_commands(&config, &commands);
@@ -696,6 +707,7 @@ fn test_dir_command_serialization() {
     let cmd = DirCommand {
         dir: "/path/to/dir".to_string(),
         cmd: "git status".to_string(),
+        env: None,
     };
 
     let json = serde_json::to_string(&cmd).unwrap();
