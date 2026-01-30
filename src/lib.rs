@@ -622,8 +622,20 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
             })
             .collect();
 
-        // Store results (already collected from rayon)
-        results.lock().unwrap_or_else(|e| e.into_inner()).extend(parallel_results);
+        // Store results (already collected from rayon), sorted for deterministic output
+        // Sort by directory name: "." first, then alphabetical
+        let mut sorted_results = parallel_results;
+        sorted_results.sort_by(|a, b| {
+            let a_name = a.directory.file_name().and_then(|n| n.to_str()).unwrap_or(".");
+            let b_name = b.directory.file_name().and_then(|n| n.to_str()).unwrap_or(".");
+            match (a_name, b_name) {
+                (".", ".") => std::cmp::Ordering::Equal,
+                (".", _) => std::cmp::Ordering::Less,
+                (_, ".") => std::cmp::Ordering::Greater,
+                _ => a_name.cmp(b_name),
+            }
+        });
+        results.lock().unwrap_or_else(|e| e.into_inner()).extend(sorted_results);
 
         // Print captured output after all spinners complete (if not JSON)
         if !config.silent && !config.json_output {
