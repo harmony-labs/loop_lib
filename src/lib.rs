@@ -598,7 +598,6 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                     .and_then(|n| n.to_str())
                     .unwrap_or(".")
                     .to_string();
-                let prefix = format!("[{}/{}]", i + 1, total);
 
                 // Update spinner to show running
                 if let Some(ref pb) = spinners[i] {
@@ -609,32 +608,13 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                     execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref());
 
                 // Update spinner with result (only if not JSON output)
+                // Note: We don't print completion status here - detailed results shown after all complete
                 if !config.json_output {
                     if let Some(ref pb) = spinners[i] {
-                        if result.success {
-                            pb.finish_with_message(format!("{} {}", "✓".green(), dir_name.green()));
-                        } else {
-                            pb.finish_with_message(format!(
-                                "{} {} (exit {})",
-                                "✗".red(),
-                                dir_name.red(),
-                                result.exit_code
-                            ));
-                        }
-                    } else {
-                        // Non-TTY output
-                        if result.success {
-                            println!("{} {} {}", prefix, "✓".green(), dir_name.green());
-                        } else {
-                            println!(
-                                "{} {} {} (exit {})",
-                                prefix,
-                                "✗".red(),
-                                dir_name.red(),
-                                result.exit_code
-                            );
-                        }
+                        // Clear spinner - detailed results shown later
+                        pb.finish_and_clear();
                     }
+                    // Non-TTY: no per-command output, detailed results shown after all complete
                 }
 
                 result
@@ -656,6 +636,11 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
         });
         results.lock().unwrap_or_else(|e| e.into_inner()).extend(sorted_results);
 
+        // Clear spinner lines before showing detailed output
+        if let Some(ref mp) = mp {
+            mp.clear().ok();
+        }
+
         // Print captured output after all spinners complete (if not JSON)
         if !config.silent && !config.json_output {
             let results = results.lock().unwrap_or_else(|e| e.into_inner());
@@ -664,8 +649,7 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                 .any(|r| !r.stdout.trim().is_empty() || !r.stderr.trim().is_empty());
 
             if has_any_output {
-                // Two newlines: one to ensure we're past the spinner area, one for the blank line
-                println!("\n");
+                println!();
             }
 
             for result in results.iter() {
