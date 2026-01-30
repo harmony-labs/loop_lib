@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -42,6 +43,12 @@ pub struct LoopConfig {
     /// Tool-specific env vars (e.g., GIT_PAGER) should be set by the caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    /// Maximum number of commands to run in parallel (pool size limit).
+    /// When set, limits the rayon thread pool to this many threads.
+    /// Use for operations with shared resources (e.g., SSH ControlMaster
+    /// has a default session limit of 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_parallel: Option<usize>,
 }
 
 /// A command to execute in a specific directory
@@ -69,6 +76,7 @@ impl Default for LoopConfig {
             json_output: false,
             spawn_stagger_ms: 0,
             env: None,
+            max_parallel: None,
         }
     }
 }
@@ -587,39 +595,53 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
             })
             .collect();
 
-        // Use rayon's parallel iterator for bounded thread pool execution
-        let parallel_results: Vec<CommandResult> = commands
-            .par_iter()
-            .enumerate()
-            .map(|(i, dir_cmd)| {
-                let dir = PathBuf::from(&dir_cmd.dir);
-                let dir_name = dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(".")
-                    .to_string();
+        // Closure to execute commands in parallel
+        let execute_parallel = || {
+            commands
+                .par_iter()
+                .enumerate()
+                .map(|(i, dir_cmd)| {
+                    let dir = PathBuf::from(&dir_cmd.dir);
+                    let dir_name = dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(".")
+                        .to_string();
 
-                // Update spinner to show running
-                if let Some(ref pb) = spinners[i] {
-                    pb.set_message(format!("{dir_name}: running..."));
-                }
-
-                let result =
-                    execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref());
-
-                // Update spinner with result (only if not JSON output)
-                // Note: We don't print completion status here - detailed results shown after all complete
-                if !config.json_output {
+                    // Update spinner to show running
                     if let Some(ref pb) = spinners[i] {
-                        // Clear spinner - detailed results shown later
-                        pb.finish_and_clear();
+                        pb.set_message(format!("{dir_name}: running..."));
                     }
-                    // Non-TTY: no per-command output, detailed results shown after all complete
-                }
 
-                result
-            })
-            .collect();
+                    let result =
+                        execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref());
+
+                    // Update spinner with result (only if not JSON output)
+                    // Note: We don't print completion status here - detailed results shown after all complete
+                    if !config.json_output {
+                        if let Some(ref pb) = spinners[i] {
+                            // Clear spinner - detailed results shown later
+                            pb.finish_and_clear();
+                        }
+                        // Non-TTY: no per-command output, detailed results shown after all complete
+                    }
+
+                    result
+                })
+                .collect()
+        };
+
+        // Use custom thread pool if max_parallel is set, otherwise use global pool
+        let parallel_results: Vec<CommandResult> = if let Some(max) = config.max_parallel {
+            // Create a custom thread pool with limited threads
+            let pool = ThreadPoolBuilder::new()
+                .num_threads(max)
+                .build()
+                .expect("Failed to create thread pool");
+            pool.install(execute_parallel)
+        } else {
+            execute_parallel()
+        };
 
         // Store results (already collected from rayon), sorted for deterministic output
         // Sort by directory name: "." first, then alphabetical
