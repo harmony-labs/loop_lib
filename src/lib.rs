@@ -38,6 +38,10 @@ pub struct LoopConfig {
     /// Default is 0 (no stagger). Set to e.g. 10 to spread out connections.
     #[serde(default)]
     pub spawn_stagger_ms: u64,
+    /// Environment variables to set for all command subprocesses.
+    /// Tool-specific env vars (e.g., GIT_PAGER) should be set by the caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
 }
 
 /// A command to execute in a specific directory
@@ -64,6 +68,7 @@ impl Default for LoopConfig {
             dry_run: false,
             json_output: false,
             spawn_stagger_ms: 0,
+            env: None,
         }
     }
 }
@@ -388,6 +393,20 @@ pub fn execute_command_in_directory_capturing(
         cmd_builder.envs(extra);
     }
 
+    // Force color output when parent stdout is a TTY
+    // This is needed because piped stdout makes child processes think they're not in a terminal
+    // Note: Tool-specific color vars (e.g., git's GIT_CONFIG_*) should be set by the
+    // plugin that knows about that tool, not here. loop_lib is tool-agnostic.
+    if io::stdout().is_terminal() {
+        cmd_builder
+            .env("FORCE_COLOR", "1") // Node.js ecosystem
+            .env("CLICOLOR_FORCE", "1"); // BSD/macOS convention
+        // Preserve TERM if set, otherwise provide a reasonable default
+        if env::var("TERM").is_err() {
+            cmd_builder.env("TERM", "xterm-256color");
+        }
+    }
+
     let output = cmd_builder
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -481,7 +500,7 @@ pub fn run(orig_config: &LoopConfig, command: &str) -> Result<()> {
         .map(|dir| DirCommand {
             dir: dir.clone(),
             cmd: command.to_string(),
-            env: None,
+            env: orig_config.env.clone(),
         })
         .collect();
 

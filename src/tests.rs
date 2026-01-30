@@ -105,6 +105,7 @@ fn test_run() {
         dry_run: false,
         json_output: false,
         spawn_stagger_ms: 0,
+        env: None,
     };
 
     let result = run(&config, "echo test");
@@ -173,6 +174,7 @@ fn test_run_without_looprc() {
         dry_run: false,
         json_output: false,
         spawn_stagger_ms: 0,
+        env: None,
     };
 
     let result = run(&config, "echo test");
@@ -205,6 +207,7 @@ fn test_run_parallel() {
         dry_run: false,
         json_output: false,
         spawn_stagger_ms: 0,
+        env: None,
     };
 
     let result = run(&config, "echo test");
@@ -311,6 +314,7 @@ fn test_include_filters() {
         dry_run: false,
         json_output: false,
         spawn_stagger_ms: 0,
+        env: None,
     };
 
     // The run function should only execute on directories matching the filter
@@ -344,6 +348,7 @@ fn test_exclude_filters() {
         dry_run: false,
         json_output: false,
         spawn_stagger_ms: 0,
+        env: None,
     };
 
     let result = run(&config, "echo test");
