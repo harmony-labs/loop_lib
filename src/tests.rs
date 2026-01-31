@@ -107,6 +107,7 @@ fn test_run() {
         spawn_stagger_ms: 0,
         env: None,
         max_parallel: None,
+        root_dir: None,
     };
 
     let result = run(&config, "echo test");
@@ -177,6 +178,7 @@ fn test_run_without_looprc() {
         spawn_stagger_ms: 0,
         env: None,
         max_parallel: None,
+        root_dir: None,
     };
 
     let result = run(&config, "echo test");
@@ -211,6 +213,7 @@ fn test_run_parallel() {
         spawn_stagger_ms: 0,
         env: None,
         max_parallel: None,
+        root_dir: None,
     };
 
     let result = run(&config, "echo test");
@@ -319,6 +322,7 @@ fn test_include_filters() {
         spawn_stagger_ms: 0,
         env: None,
         max_parallel: None,
+        root_dir: None,
     };
 
     // The run function should only execute on directories matching the filter
@@ -354,6 +358,7 @@ fn test_exclude_filters() {
         spawn_stagger_ms: 0,
         env: None,
         max_parallel: None,
+        root_dir: None,
     };
 
     let result = run(&config, "echo test");
