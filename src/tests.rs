@@ -11,7 +11,8 @@ const FAIL_CMD: &str = "false";
 /// Returns a cross-platform touch command for the given path
 #[cfg(windows)]
 fn touch_cmd(path: &std::path::Path) -> String {
-    format!("type nul > \"{}\"", path.display())
+    // Use copy nul which works reliably with cmd /c
+    format!("copy nul \"{}\"", path.display())
 }
 #[cfg(not(windows))]
 fn touch_cmd(path: &std::path::Path) -> String {
