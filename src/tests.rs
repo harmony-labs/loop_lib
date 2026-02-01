@@ -147,7 +147,8 @@ fn test_execute_command_in_directory() {
     let aliases = HashMap::new();
     let temp_dir = TempDir::new().unwrap();
 
-    let result = execute_command_in_directory(temp_dir.path(), "echo test", &config, &aliases, None);
+    let result =
+        execute_command_in_directory(temp_dir.path(), "echo test", &config, &aliases, None);
     assert!(result.success);
     assert_eq!(result.exit_code, 0);
 
@@ -234,8 +235,13 @@ fn test_execute_command_in_directory_capturing() {
     let aliases = HashMap::new();
     let temp_dir = TempDir::new().unwrap();
 
-    let result =
-        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases, None);
+    let result = execute_command_in_directory_capturing(
+        temp_dir.path(),
+        "echo hello",
+        &config,
+        &aliases,
+        None,
+    );
     assert!(result.success);
     assert_eq!(result.exit_code, 0);
     assert!(result.stdout.contains("hello"));
@@ -439,8 +445,13 @@ fn test_execute_command_in_directory_capturing_dry_run() {
     let aliases = HashMap::new();
     let temp_dir = TempDir::new().unwrap();
 
-    let result =
-        execute_command_in_directory_capturing(temp_dir.path(), "echo hello", &config, &aliases, None);
+    let result = execute_command_in_directory_capturing(
+        temp_dir.path(),
+        "echo hello",
+        &config,
+        &aliases,
+        None,
+    );
     assert!(result.success);
     assert!(result.stdout.contains("[DRY RUN]"));
     assert!(result.stdout.contains("echo hello"));
@@ -625,7 +636,10 @@ fn test_run_commands_failure_in_dry_run_succeeds() {
     }];
 
     let result = run_commands(&config, &commands);
-    assert!(result.is_ok(), "dry_run should succeed even for failing commands");
+    assert!(
+        result.is_ok(),
+        "dry_run should succeed even for failing commands"
+    );
 }
 
 #[test]

@@ -311,7 +311,10 @@ pub fn execute_command_in_directory(
 
     if !config.silent {
         // Check if this directory is the root_dir (should display as ".")
-        let is_root = config.root_dir.as_ref().map_or(false, |root| dir == root.as_path());
+        let is_root = config
+            .root_dir
+            .as_ref()
+            .is_some_and(|root| dir == root.as_path());
         let dir_name = if is_root {
             "."
         } else {
@@ -428,7 +431,7 @@ pub fn execute_command_in_directory_capturing(
         cmd_builder
             .env("FORCE_COLOR", "1") // Node.js ecosystem
             .env("CLICOLOR_FORCE", "1"); // BSD/macOS convention
-        // Preserve TERM if set, otherwise provide a reasonable default
+                                         // Preserve TERM if set, otherwise provide a reasonable default
         if env::var("TERM").is_err() {
             cmd_builder.env("TERM", "xterm-256color");
         }
@@ -601,7 +604,7 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                     pb.set_style(spinner_style.clone());
                     pb.set_prefix(format!("[{}/{}]", i + 1, total));
                     let dir_path = PathBuf::from(&dir_cmd.dir);
-                    let is_root = config.root_dir.as_ref().map_or(false, |r| dir_path == *r);
+                    let is_root = config.root_dir.as_ref().is_some_and(|r| dir_path == *r);
                     let dir_name = if is_root {
                         ".".to_string()
                     } else {
@@ -627,7 +630,7 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                 .enumerate()
                 .map(|(i, dir_cmd)| {
                     let dir = PathBuf::from(&dir_cmd.dir);
-                    let is_root = config.root_dir.as_ref().map_or(false, |r| dir == *r);
+                    let is_root = config.root_dir.as_ref().is_some_and(|r| dir == *r);
                     let dir_name = if is_root {
                         ".".to_string()
                     } else {
@@ -642,8 +645,13 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                         pb.set_message(format!("{dir_name}: running..."));
                     }
 
-                    let result =
-                        execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref());
+                    let result = execute_command_in_directory_capturing(
+                        &dir,
+                        &dir_cmd.cmd,
+                        config,
+                        &aliases,
+                        dir_cmd.env.as_ref(),
+                    );
 
                     // Update spinner with result (only if not JSON output)
                     // Note: We don't print completion status here - detailed results shown after all complete
@@ -676,10 +684,18 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
         // Sort by directory name: root_dir first (displayed as "."), then alphabetical
         let mut sorted_results = parallel_results;
         sorted_results.sort_by(|a, b| {
-            let a_is_root = config.root_dir.as_ref().map_or(false, |r| a.directory == *r);
-            let b_is_root = config.root_dir.as_ref().map_or(false, |r| b.directory == *r);
-            let a_name = a.directory.file_name().and_then(|n| n.to_str()).unwrap_or(".");
-            let b_name = b.directory.file_name().and_then(|n| n.to_str()).unwrap_or(".");
+            let a_is_root = config.root_dir.as_ref().is_some_and(|r| a.directory == *r);
+            let b_is_root = config.root_dir.as_ref().is_some_and(|r| b.directory == *r);
+            let a_name = a
+                .directory
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(".");
+            let b_name = b
+                .directory
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(".");
             match (a_is_root, b_is_root) {
                 (true, true) => std::cmp::Ordering::Equal,
                 (true, false) => std::cmp::Ordering::Less,
@@ -692,7 +708,10 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
                 },
             }
         });
-        results.lock().unwrap_or_else(|e| e.into_inner()).extend(sorted_results);
+        results
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend(sorted_results);
 
         // Clear spinner lines before showing detailed output
         if let Some(ref mp) = mp {
@@ -712,7 +731,10 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
 
             for result in results.iter() {
                 // Check if this directory is the root_dir (should display as ".")
-                let is_root = config.root_dir.as_ref().map_or(false, |r| result.directory == *r);
+                let is_root = config
+                    .root_dir
+                    .as_ref()
+                    .is_some_and(|r| result.directory == *r);
                 let dir_name = if is_root {
                     // Display root as ". (basename)"
                     if let Some(base) = result.directory.file_name().and_then(|s| s.to_str()) {
@@ -753,11 +775,26 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
             let dir = PathBuf::from(&dir_cmd.dir);
             let result = if config.json_output {
                 // Capture output for JSON mode
-                execute_command_in_directory_capturing(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref())
+                execute_command_in_directory_capturing(
+                    &dir,
+                    &dir_cmd.cmd,
+                    config,
+                    &aliases,
+                    dir_cmd.env.as_ref(),
+                )
             } else {
-                execute_command_in_directory(&dir, &dir_cmd.cmd, config, &aliases, dir_cmd.env.as_ref())
+                execute_command_in_directory(
+                    &dir,
+                    &dir_cmd.cmd,
+                    config,
+                    &aliases,
+                    dir_cmd.env.as_ref(),
+                )
             };
-            results.lock().unwrap_or_else(|e| e.into_inner()).push(result);
+            results
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(result);
         }
     }
 
