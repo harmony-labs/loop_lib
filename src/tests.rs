@@ -586,7 +586,10 @@ fn test_run_commands_with_different_commands() {
     ];
 
     let result = run_commands(&config, &commands);
-    assert!(result.is_ok(), "Different commands should execute in different directories");
+    assert!(
+        result.is_ok(),
+        "Different commands should execute in different directories"
+    );
 }
 
 #[test]
