@@ -2,6 +2,22 @@ use super::*;
 use std::fs;
 use tempfile::TempDir;
 
+/// Cross-platform command that always fails with exit code 1
+#[cfg(windows)]
+const FAIL_CMD: &str = "cmd /c exit 1";
+#[cfg(not(windows))]
+const FAIL_CMD: &str = "false";
+
+/// Returns a cross-platform touch command for the given path
+#[cfg(windows)]
+fn touch_cmd(path: &std::path::Path) -> String {
+    format!("type nul > \"{}\"", path.display())
+}
+#[cfg(not(windows))]
+fn touch_cmd(path: &std::path::Path) -> String {
+    format!("touch {}", path.display())
+}
+
 #[test]
 fn test_parse_config() {
     let temp_dir = TempDir::new().unwrap();
@@ -114,7 +130,7 @@ fn test_run() {
     assert!(result.is_ok());
 
     // Test with a failing command
-    let result = run(&config, "false");
+    let result = run(&config, FAIL_CMD);
     assert!(result.is_err()); // The function should return an error if any command fails
 }
 
@@ -152,7 +168,7 @@ fn test_execute_command_in_directory() {
     assert!(result.success);
     assert_eq!(result.exit_code, 0);
 
-    let result = execute_command_in_directory(temp_dir.path(), "false", &config, &aliases, None);
+    let result = execute_command_in_directory(temp_dir.path(), FAIL_CMD, &config, &aliases, None);
     assert!(!result.success);
     assert_eq!(result.exit_code, 1);
 }
@@ -221,7 +237,7 @@ fn test_run_parallel() {
     assert!(result.is_ok());
 
     // Test with a failing command in parallel mode
-    let result = run(&config, "false");
+    let result = run(&config, FAIL_CMD);
     assert!(result.is_err());
 }
 
@@ -247,7 +263,7 @@ fn test_execute_command_in_directory_capturing() {
     assert!(result.stdout.contains("hello"));
 
     let result =
-        execute_command_in_directory_capturing(temp_dir.path(), "false", &config, &aliases, None);
+        execute_command_in_directory_capturing(temp_dir.path(), FAIL_CMD, &config, &aliases, None);
     assert!(!result.success);
     assert_eq!(result.exit_code, 1);
 }
@@ -396,7 +412,7 @@ fn test_dry_run_does_not_execute() {
     };
 
     // This command would create a file if executed
-    let cmd = format!("touch {}", marker_file.display());
+    let cmd = touch_cmd(&marker_file);
     let result = run(&config, &cmd);
     assert!(result.is_ok());
 
@@ -416,7 +432,7 @@ fn test_dry_run_returns_success() {
     };
 
     // Even a command that would fail should succeed in dry_run mode
-    let result = run(&config, "false");
+    let result = run(&config, FAIL_CMD);
     assert!(result.is_ok(), "dry_run should always succeed");
 }
 
@@ -430,7 +446,7 @@ fn test_execute_command_in_directory_dry_run() {
     let aliases = HashMap::new();
     let temp_dir = TempDir::new().unwrap();
 
-    let result = execute_command_in_directory(temp_dir.path(), "false", &config, &aliases, None);
+    let result = execute_command_in_directory(temp_dir.path(), FAIL_CMD, &config, &aliases, None);
     assert!(result.success, "dry_run should return success");
     assert_eq!(result.exit_code, 0);
 }
@@ -559,12 +575,12 @@ fn test_run_commands_with_different_commands() {
     let commands = vec![
         DirCommand {
             dir: dir1.to_str().unwrap().to_string(),
-            cmd: format!("touch {}", file1.display()),
+            cmd: touch_cmd(&file1),
             env: None,
         },
         DirCommand {
             dir: dir2.to_str().unwrap().to_string(),
-            cmd: format!("touch {}", file2.display()),
+            cmd: touch_cmd(&file2),
             env: None,
         },
     ];
@@ -588,7 +604,7 @@ fn test_run_commands_dry_run() {
 
     let commands = vec![DirCommand {
         dir: temp_dir.path().to_str().unwrap().to_string(),
-        cmd: format!("touch {}", marker_file.display()),
+        cmd: touch_cmd(&marker_file),
         env: None,
     }];
 
@@ -611,7 +627,7 @@ fn test_run_commands_failure_handling() {
 
     let commands = vec![DirCommand {
         dir: dir1.to_str().unwrap().to_string(),
-        cmd: "false".to_string(), // This command always fails
+        cmd: FAIL_CMD.to_string(), // This command always fails
         env: None,
     }];
 
@@ -631,7 +647,7 @@ fn test_run_commands_failure_in_dry_run_succeeds() {
 
     let commands = vec![DirCommand {
         dir: temp_dir.path().to_str().unwrap().to_string(),
-        cmd: "false".to_string(),
+        cmd: FAIL_CMD.to_string(),
         env: None,
     }];
 
