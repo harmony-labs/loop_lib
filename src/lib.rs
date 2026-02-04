@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -643,12 +644,24 @@ fn execute_commands_internal(config: &LoopConfig, commands: &[DirCommand]) -> Re
             })
             .collect();
 
+        // Atomic counter for staggered spawning - prevents SSH socket saturation
+        let spawn_counter = Arc::new(AtomicUsize::new(0));
+        let stagger_ms = config.spawn_stagger_ms;
+
         // Closure to execute commands in parallel
         let execute_parallel = || {
             commands
                 .par_iter()
                 .enumerate()
                 .map(|(i, dir_cmd)| {
+                    // Apply stagger delay to spread out connection attempts.
+                    // Each thread gets a slot number and sleeps proportionally.
+                    if stagger_ms > 0 {
+                        let slot = spawn_counter.fetch_add(1, Ordering::SeqCst);
+                        let delay = Duration::from_millis(stagger_ms * slot as u64);
+                        std::thread::sleep(delay);
+                    }
+
                     let dir = PathBuf::from(&dir_cmd.dir);
                     let is_root = config.root_dir.as_ref().is_some_and(|r| dir == *r);
                     let dir_name = if is_root {
