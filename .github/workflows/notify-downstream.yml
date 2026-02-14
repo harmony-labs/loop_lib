@@ -28,7 +28,7 @@ jobs:
           - meta_git_cli
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Extract commit info
         id: commit
